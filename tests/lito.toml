@@ -1,0 +1,16 @@
+[package]
+name = "vectext-tests"
+
+[dependencies]
+vectext = { path = ".." }
+rstd-test = { version = "0.1.5" }
+rstd-nostd = { version = "0.1.5", usage = "link" }
+
+[[test]]
+name = "vectext"
+sources = ["lib.cppm", "main.cpp", "text.cpp", "fonts.cpp", "unicode.cpp", "performance.cpp"]
+link-stdlib = false
+
+[[test.attach]]
+package = "vectext"
+sources = ["internal.cpp"]
