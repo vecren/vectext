@@ -12,6 +12,7 @@ struct QueryLine {
     Index start, end;
 };
 struct Queries final : TextQueries {
+    Option<Index> hidden;
     Vec<Stop> stops;
     Vec<QueryLine> lines;
     auto hit(Point p) const -> Result<TextHit, TextError> override {
@@ -52,6 +53,8 @@ struct Queries final : TextQueries {
         return caret(byte, TextAffinity::Downstream);
     }
     auto caret(Index byte, TextAffinity affinity) const -> Result<TextCaret, TextError> override {
+        if (hidden.is_some() && byte > *hidden)
+            byte = *hidden;
         usize low{}, high = stops.len();
         while (low < high) {
             auto mid = (low + high) / usize(2);

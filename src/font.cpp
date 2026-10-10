@@ -47,6 +47,13 @@ auto FontCollection::create(FontCollectionOptions options) -> Result<FontCollect
 }
 auto FontCollection::add_font(slice<unsigned char> bytes, Index face_index)
     -> Result<empty, TextError> {
+    auto result = register_font(bytes, face_index);
+    if (result.is_err())
+        return Err(result.unwrap_err());
+    return Ok(empty{});
+}
+auto FontCollection::register_font(slice<unsigned char> bytes, Index face_index)
+    -> Result<FontSource, TextError> {
     auto &state = impl_->state;
     auto guard = state.mutex.lock().unwrap();
     if (bytes.len().to_primitive() > state.limits.font_bytes - state.source_bytes())
@@ -60,7 +67,7 @@ auto FontCollection::add_font(slice<unsigned char> bytes, Index face_index)
         return Err(added.unwrap_err());
     state.clear_cache();
     state.counters.revision = new_identity();
-    return Ok(empty{});
+    return Ok(FontSource{state.id, added.unwrap()->id});
 }
 auto FontCollection::refresh() -> Result<empty, TextError> {
     auto &state = impl_->state;

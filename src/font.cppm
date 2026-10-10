@@ -31,6 +31,8 @@ class FontCollection {
     auto operator=(const FontCollection &other) -> FontCollection &;
     auto operator=(FontCollection &&) -> FontCollection &;
     ~FontCollection();
+    auto register_font(slice<unsigned char> bytes, Index face_index = 0)
+        -> Result<FontSource, TextError>;
     auto add_font(slice<unsigned char> bytes, Index face_index = 0) -> Result<empty, TextError>;
     auto refresh() -> Result<empty, TextError>;
     void clear_cache();

@@ -135,3 +135,65 @@ TEST(VectextLayout, QueryRoundTrip) {
         }
     }
 }
+TEST(VectextLayout, CompatibilityOptions) {
+    auto service = fixed_service();
+    auto plain = service.layout({.text = "ab"_str}).unwrap();
+    auto tab = service.layout({.text = "a\tb"_str, .tabs = TextTabs::Ignore}).unwrap();
+    EXPECT_EQ(plain.logical_bounds(), tab.logical_bounds());
+    auto centered =
+        service.layout({.text = "abc\nx"_str, .alignment = TextAlignment::Center}).unwrap();
+    auto &last = centered.lines()[usize(1)];
+    EXPECT_EQ(last.logical.x, (centered.logical_bounds().width - last.logical.width) / 2);
+    EXPECT_EQ(centered.caret(4).unwrap().bounds.x, last.logical.x);
+    auto width = service.layout({.text = "a "_str}).unwrap().logical_bounds().width;
+    auto trimmed =
+        service
+            .layout(
+                {.text = "a   b"_str, .width = Some(width), .whitespace = TextWhitespace::TrimWrap})
+            .unwrap();
+    EXPECT_EQ(trimmed.lines().len(), usize(2));
+    EXPECT_EQ(trimmed.glyphs().len(), usize(2));
+    for (Index i = 0; i <= 5; ++i)
+        EXPECT_TRUE(trimmed.caret(i).is_ok());
+    const rstd::byte input[]{rstd::byte('A'), rstd::byte(0xff), rstd::byte(0xc2), rstd::byte('B'),
+                             rstd::byte(0xe2)};
+    auto bytes = slice<u8>::from_raw_parts(input, usize(5));
+    EXPECT_EQ(service.layout({.bytes = Some(bytes)}).unwrap_err(), TextError::InvalidUtf8);
+    auto replaced =
+        service.layout({.bytes = Some(bytes), .invalid_text = InvalidText::Replace}).unwrap();
+    EXPECT_TRUE(replaced.text() == "A\ufffd\ufffdB\ufffd"_str);
+    EXPECT_EQ(replaced.glyphs().len(), usize(5));
+}
+TEST(VectextLayout, VisibleAndSyntheticOverflow) {
+    auto service = fixed_service();
+    auto clipped = service.layout({.text = "abc\ndef"_str, .max_lines = 1}).unwrap();
+    EXPECT_EQ(clipped.lines().len(), usize(1));
+    EXPECT_EQ(clipped.hidden_range()->start, 3u);
+    EXPECT_EQ(clipped.caret(7).unwrap().bounds, clipped.caret(3).unwrap().bounds);
+    auto dots = service
+                    .layout({.text = "ab\ncd"_str,
+                             .width = Some(0.0),
+                             .max_lines = 1,
+                             .overflow = TextOverflow::ThreeDots})
+                    .unwrap();
+    EXPECT_EQ(dots.glyphs().len(), usize(3));
+    EXPECT_EQ(dots.hidden_range()->start, 0u);
+    EXPECT_TRUE(dots.logical_bounds().width > 0);
+    for (auto &glyph : dots.glyphs()) {
+        EXPECT_TRUE(glyph.synthetic);
+        EXPECT_EQ(glyph.byte_start, glyph.byte_end);
+    }
+    for (Index i = 0; i <= 5; ++i)
+        EXPECT_TRUE(dots.caret(i).is_ok());
+    auto hit = dots.hit({dots.logical_bounds().width, 1}).unwrap();
+    EXPECT_EQ(hit.byte_index, 0u);
+    EXPECT_EQ(service.layout({.text = ""_str, .max_lines = 1, .overflow = TextOverflow::ThreeDots})
+                  .unwrap()
+                  .glyphs()
+                  .len(),
+              usize());
+    auto empty =
+        service.layout({.text = "\na"_str, .max_lines = 1, .overflow = TextOverflow::ThreeDots})
+            .unwrap();
+    EXPECT_EQ(empty.glyphs().len(), usize(3));
+}

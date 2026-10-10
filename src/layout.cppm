@@ -10,6 +10,17 @@ enum class TextDirection { Auto, LeftToRight, RightToLeft };
 enum class TextWrap { None, Word, WordOrCharacter };
 enum class TextAlignment { Natural, Start, End, Left, Right, Center };
 enum class TextAffinity { Downstream, Upstream };
+struct FontSource {
+    Serial collection{}, source{};
+    friend auto operator==(const FontSource &, const FontSource &) -> bool = default;
+};
+enum class TextOverflow { Clip, ThreeDots };
+enum class TextTabs { Stops, Ignore };
+enum class TextWhitespace { Preserve, TrimWrap };
+enum class InvalidText { Reject, Replace };
+struct TextRange {
+    Index start{}, end{};
+};
 struct TextRequest {
     ref<str> text{""_str}, family{"sans"_str}, language{"und"_str};
     Scalar size{16};
@@ -19,6 +30,14 @@ struct TextRequest {
     bool bold{}, italic{};
     TextAlignment alignment{TextAlignment::Natural};
     Scalar line_spacing{};
+    Option<FontSource> source;
+    Index max_lines{};
+    TextOverflow overflow{TextOverflow::Clip};
+    TextTabs tabs{TextTabs::Stops};
+    TextWhitespace whitespace{TextWhitespace::Preserve};
+    // Byte input is decoded once; all result indices refer to normalized text().
+    Option<slice<u8>> bytes;
+    InvalidText invalid_text{InvalidText::Reject};
 };
 struct TextFormat {
     ref<str> family{"sans"_str}, language{"und"_str};
@@ -93,7 +112,7 @@ struct TextGlyph {
     Index font{}, glyph{}, byte_start{}, byte_end{}, line{};
     Point position;
     Scalar advance{};
-    bool drawable{true}, missing{};
+    bool drawable{true}, missing{}, synthetic{};
 };
 struct TextLine {
     Index byte_start{}, byte_end{}, glyph_start{}, glyph_end{};
@@ -130,6 +149,7 @@ struct TextLayoutData {
     Box<TextQueries> queries;
     Vec<TextRun> runs;
     Serial revision{};
+    Option<TextRange> hidden;
 };
 class TextLayout {
     struct Data {
@@ -156,13 +176,21 @@ class TextLayout {
             data.lines.is_empty())
             return Err(TextError::InvalidValue);
         auto text = data.text.as_str();
+        if (data.hidden.is_some() &&
+            (data.hidden->start > data.hidden->end || data.hidden->end != bytes ||
+             !text->is_char_boundary(usize(data.hidden->start))))
+            return Err(TextError::InvalidValue);
         Index missing{};
         for (const auto &glyph : data.glyphs) {
             if (usize(glyph.font) >= data.fonts.len() || usize(glyph.line) >= data.lines.len() ||
-                glyph.byte_start >= glyph.byte_end || glyph.byte_end > bytes ||
-                !text->is_char_boundary(usize(glyph.byte_start)) ||
+                (glyph.synthetic ? glyph.byte_start != glyph.byte_end
+                                 : glyph.byte_start >= glyph.byte_end) ||
+                glyph.byte_end > bytes || !text->is_char_boundary(usize(glyph.byte_start)) ||
                 !text->is_char_boundary(usize(glyph.byte_end)) || !finite(glyph.position.x) ||
                 !finite(glyph.position.y) || !finite(glyph.advance))
+                return Err(TextError::InvalidValue);
+            if (glyph.synthetic &&
+                (data.hidden.is_none() || glyph.byte_start != data.hidden->start))
                 return Err(TextError::InvalidValue);
             if (glyph.missing)
                 ++missing;
@@ -191,7 +219,7 @@ class TextLayout {
         Index run_glyph{};
         for (const auto &run : data.runs) {
             if (usize(run.font) >= data.fonts.len() || usize(run.line) >= data.lines.len() ||
-                run.byte_start >= run.byte_end || run.byte_end > bytes ||
+                run.byte_start > run.byte_end || run.byte_end > bytes ||
                 !text->is_char_boundary(usize(run.byte_start)) ||
                 !text->is_char_boundary(usize(run.byte_end)) || run.glyph_start != run_glyph ||
                 run.glyph_end < run.glyph_start || usize(run.glyph_end) > data.glyphs.len())
@@ -221,6 +249,7 @@ class TextLayout {
     auto glyphs() const -> slice<TextGlyph> { return data_->value.glyphs.as_slice(); }
     auto fonts() const -> slice<FontInstance> { return data_->value.fonts.as_slice(); }
     auto runs() const -> slice<TextRun> { return data_->value.runs.as_slice(); }
+    auto hidden_range() const -> Option<TextRange> { return data_->value.hidden; }
     auto revision() const -> Serial { return data_->value.revision; }
     auto lines() const -> slice<TextLine> { return data_->value.lines.as_slice(); }
     auto hit(Point point) const -> Result<TextHit, TextError> {

@@ -92,7 +92,22 @@ auto candidates(Collection &c, TextRequest request) -> Result<Vec<Candidate>, Te
     if (!sorted || !sorted->nfont)
         return Err(TextError::Font);
     Vec<Candidate> output;
-    for (int i = 0; i < sorted->nfont && static_cast<Index>(i) < c.limits.fallback_attempts; ++i) {
+    if (request.source.is_some()) {
+        if (request.source->collection != c.id)
+            return Err(TextError::InvalidValue);
+        for (auto &source : c.sources) {
+            if (source->id != request.source->source)
+                continue;
+            fc::Pattern copy(fc::FcPatternDuplicate(source->pattern.get()));
+            if (!copy)
+                return Err(TextError::Font);
+            output.push(Candidate{rstd::move(copy), {}});
+            break;
+        }
+        if (output.is_empty())
+            return Err(TextError::InvalidValue);
+    }
+    for (int i = 0; i < sorted->nfont && output.len() < usize(c.limits.fallback_attempts); ++i) {
         fc::Pattern copy(fc::FcPatternDuplicate(sorted->fonts[i]));
         if (!copy)
             return Err(TextError::Font);

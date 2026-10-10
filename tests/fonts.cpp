@@ -150,3 +150,17 @@ TEST(VectextFonts, GlyphBudgetAndFallbackLimit) {
     auto missing = service.layout({.text = "中"_str, .family = "DejaVu Sans"_str}).unwrap();
     EXPECT_EQ(missing.missing_glyphs(), 1u);
 }
+TEST(VectextFonts, ExplicitSourceSurvivesRefresh) {
+    auto collection = fixed_collection();
+    auto bytes = font_data("DejaVuSans-Bold.ttf"_str);
+    auto source = collection.register_font(bytes.as_slice()).unwrap();
+    SystemTextService service(collection);
+    auto selected = service.layout({.text = "A中"_str, .source = Some(source)}).unwrap();
+    EXPECT_TRUE(selected.fonts()[usize()].name()->contains("Bold"_str));
+    EXPECT_EQ(selected.missing_glyphs(), 0u);
+    collection.refresh().unwrap();
+    EXPECT_TRUE(service.layout({.text = "A"_str, .source = Some(source)}).is_ok());
+    auto other = fixed_service();
+    EXPECT_EQ(other.layout({.text = "A"_str, .source = Some(source)}).unwrap_err(),
+              TextError::InvalidValue);
+}

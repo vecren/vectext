@@ -29,7 +29,7 @@ inline auto terminated(ref<str> s) -> Vec<char> {
 struct Source {
     Vec<u8> bytes;
     Index index{};
-    Serial revision{};
+    Serial id{new_identity()}, revision{};
     String path, name;
     fc::Pattern pattern;
     Source(Vec<u8> bytes, Index index, String path, String name, fc::Pattern pattern)
@@ -75,6 +75,7 @@ struct Font {
     }
 };
 struct Collection {
+    Serial id{new_identity()};
     bool system;
     String config_path;
     TextLimits limits;
