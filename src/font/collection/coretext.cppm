@@ -1,11 +1,11 @@
-module vectext:detail.collection.coretext;
-import :detail.state;
-import :detail.collection.common;
-import :detail.platform.coretext;
+module vectext:font.collection.coretext;
+import :font.state;
+import :font.collection.common;
+import :platform.coretext;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace vectext::detail {
+namespace vectext {
 namespace cf = coretext::cf;
 namespace ct = coretext::ct;
 auto candidates(Collection &c, TextRequest request) -> Result<Vec<Candidate>, TextError> {
@@ -125,4 +125,4 @@ auto candidate_supports(const Candidate &candidate, Index cp) -> bool {
             candidate.pattern.get(), ct::kCTFontCharacterSetAttribute)));
     return !charset || cf::CFCharacterSetIsLongCharacterMember(charset.get(), cp);
 }
-} // namespace vectext::detail
+} // namespace vectext

@@ -1,13 +1,13 @@
-module vectext:detail.layout;
-import :detail.state;
-import :detail.collection;
-import :detail.queries;
+module vectext:layout.build;
+import :font.state;
+import :font.collection;
+import :layout.queries;
 import :layout;
 import :font;
 import :types;
 
 using namespace rstd::prelude;
-namespace vectext::detail {
+namespace vectext {
 struct Character {
     Index code{}, begin{}, end{}, font{}, glyph{};
     Scalar advance{};
@@ -400,4 +400,4 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     ++collection.counters.layouts;
     return Ok(rstd::move(result));
 }
-} // namespace vectext::detail
+} // namespace vectext

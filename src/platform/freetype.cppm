@@ -1,11 +1,11 @@
-module vectext:detail.platform.freetype;
+module vectext:platform.freetype;
 import :font;
 import :layout;
 import :types;
-import :detail.platform.common;
+import :platform.common;
 import vectext.ffi.freetype;
 using namespace rstd::prelude;
-namespace vectext::detail::freetype {
+namespace vectext::freetype {
 namespace ft = ffi::freetype;
 auto bitmap_coverage(const ft::FT_Bitmap &bitmap, TextLimits limits)
     -> Result<Vec<unsigned char>, TextError> {
@@ -127,4 +127,4 @@ struct Face {
                               rstd::move(coverage).unwrap()});
     }
 };
-} // namespace vectext::detail::freetype
+} // namespace vectext::freetype

@@ -1,8 +1,8 @@
-module vectext:detail.raster;
-import :detail.state;
+module vectext:font.raster;
+import :font.state;
 import :layout;
 using namespace rstd::prelude;
-namespace vectext::detail {
+namespace vectext {
 struct Rasterizer final : FontRasterizer {
     Arc<Font> font;
     explicit Rasterizer(Arc<Font> font) : font(rstd::move(font)) {}
@@ -10,4 +10,4 @@ struct Rasterizer final : FontRasterizer {
         return font->rasterize(glyph, scale);
     }
 };
-} // namespace vectext::detail
+} // namespace vectext

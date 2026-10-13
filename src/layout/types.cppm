@@ -1,4 +1,4 @@
-export module vectext:layout;
+export module vectext:layout.types;
 export import vectext.error;
 import :types;
 using namespace rstd::prelude;

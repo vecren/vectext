@@ -1,8 +1,8 @@
-module vectext:detail.collection.common;
-import :detail.state;
-import :detail.platform;
+module vectext:font.collection.common;
+import :font.state;
+import :platform;
 using namespace rstd::prelude;
-namespace vectext::detail {
+namespace vectext {
 auto add_source(Collection &c, Vec<u8> bytes, Index index, String path, bool application)
     -> Result<Arc<Source>, TextError> {
     if (bytes.is_empty())
@@ -18,4 +18,4 @@ auto add_source(Collection &c, Vec<u8> bytes, Index index, String path, bool app
     c.sources.push(source.clone());
     return Ok(rstd::move(source));
 }
-} // namespace vectext::detail
+} // namespace vectext

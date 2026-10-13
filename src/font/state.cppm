@@ -1,13 +1,13 @@
-module vectext:detail.state;
+module vectext:font.state;
 import :font;
 import :layout;
 import :types;
-import :detail.platform;
-import :detail.platform.common;
+import :platform;
+import :platform.common;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace vectext::detail {
+namespace vectext {
 using rstd::sync::Arc;
 using rstd::sync::Weak;
 struct Source {
@@ -133,4 +133,4 @@ struct Candidate {
     Option<Arc<Source>> source;
     Scalar scale{1};
 };
-} // namespace vectext::detail
+} // namespace vectext

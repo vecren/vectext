@@ -1,12 +1,12 @@
-module vectext:detail.platform.directwrite;
+module vectext:platform.directwrite;
 import :font;
 import :layout;
-import :detail.platform.common;
+import :platform.common;
 import vectext.ffi.directwrite;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace vectext::detail::directwrite {
+namespace vectext::directwrite {
 namespace dw = ffi::directwrite;
 using rstd::sync::Arc;
 using Pattern = dw::Owned<dw::IDWriteFontFace3>;
@@ -398,4 +398,4 @@ auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits li
                   (metrics.lineGap > 0 ? metrics.lineGap * size / face.units : 0);
     return Ok(empty{});
 }
-} // namespace vectext::detail::directwrite
+} // namespace vectext::directwrite

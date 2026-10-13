@@ -1,7 +1,7 @@
-module vectext:detail.platform.coretext;
+module vectext:platform.coretext;
 import :font;
 import :layout;
-import :detail.platform.common;
+import :platform.common;
 import vectext.ffi.owner;
 import vectext.ffi.corefoundation;
 import vectext.ffi.coretext;
@@ -9,7 +9,7 @@ import vectext.ffi.coregraphics;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace vectext::detail::coretext {
+namespace vectext::coretext {
 namespace cf = ffi::corefoundation;
 namespace ct = ffi::coretext;
 namespace cg = ffi::coregraphics;
@@ -284,4 +284,4 @@ auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits li
         face.height = face.ascent + face.descent;
     return Ok(empty{});
 }
-} // namespace vectext::detail::coretext
+} // namespace vectext::coretext

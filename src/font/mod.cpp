@@ -1,9 +1,8 @@
 module vectext;
-import :detail.state;
-import :detail.collection;
-import :detail.layout;
-import :detail.raster;
-using namespace vectext::detail;
+import :font.state;
+import :font.collection;
+import :layout.build;
+import :font.raster;
 using namespace rstd::prelude;
 namespace vectext {
 struct FontCollection::Impl {

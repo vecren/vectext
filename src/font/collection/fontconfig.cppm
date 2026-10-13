@@ -1,10 +1,10 @@
-module vectext:detail.collection.fontconfig;
-import :detail.state;
-import :detail.collection.common;
-import :detail.platform.common;
+module vectext:font.collection.fontconfig;
+import :font.state;
+import :font.collection.common;
+import :platform.common;
 import vectext.ffi.fontconfig;
 using namespace rstd::prelude;
-namespace vectext::detail {
+namespace vectext {
 namespace fc = ffi::fontconfig;
 auto candidates(Collection &c, TextRequest request) -> Result<Vec<Candidate>, TextError> {
     fc::Pattern pattern(fc::FcPatternCreate());
@@ -147,4 +147,4 @@ auto candidate_supports(const Candidate &candidate, Index cp) -> bool {
                fc::FcResultMatch ||
            fc::FcCharSetHasChar(charset, cp);
 }
-} // namespace vectext::detail
+} // namespace vectext

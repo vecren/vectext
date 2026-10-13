@@ -1,11 +1,11 @@
-module vectext:detail.platform.fontconfig;
+module vectext:platform.fontconfig;
 import :font;
-import :detail.platform.common;
-import :detail.platform.freetype;
+import :platform.common;
+import :platform.freetype;
 import vectext.ffi.fontconfig;
 import vectext.ffi.freetype;
 using namespace rstd::prelude;
-namespace vectext::detail::fontconfig {
+namespace vectext::fontconfig {
 namespace fc = ffi::fontconfig;
 namespace ft = ffi::freetype;
 using Config = fc::Config;
@@ -64,4 +64,4 @@ auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits li
     -> Result<empty, TextError> {
     return face.initialize(source.bytes.as_slice(), source.index, size, limits);
 }
-} // namespace vectext::detail::fontconfig
+} // namespace vectext::fontconfig

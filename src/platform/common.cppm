@@ -1,9 +1,9 @@
 module;
 #include <string.h>
-module vectext:detail.platform.common;
+module vectext:platform.common;
 import :types;
 using namespace rstd::prelude;
-namespace vectext::detail {
+namespace vectext {
 struct GlyphMetrics {
     Scalar advance{};
     Rect ink;
@@ -20,4 +20,4 @@ inline auto terminated(ref<str> s) -> Vec<char> {
     out.push('\0');
     return out;
 }
-} // namespace vectext::detail
+} // namespace vectext

@@ -1,8 +1,8 @@
-module vectext:detail.queries;
+module vectext:layout.queries;
 import :layout;
 import :types;
 using namespace rstd::prelude;
-namespace vectext::detail {
+namespace vectext {
 struct Stop {
     Index byte;
     Scalar x;
@@ -83,4 +83,4 @@ struct Queries final : TextQueries {
         return Ok(TextCaret{{stops[low].x, line.bounds.y, 0, line.bounds.height}});
     }
 };
-} // namespace vectext::detail
+} // namespace vectext

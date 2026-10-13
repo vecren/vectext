@@ -1,19 +1,18 @@
 module;
 #include <rstd/test/gtest.hpp>
 module vectext;
-import :detail.raster;
-import :detail.layout;
+import :font.raster;
+import :layout.build;
 #if !__is_target_os(macos) && !__is_target_os(windows)
 import vectext.ffi.freetype;
-import :detail.platform.freetype;
+import :platform.freetype;
 #endif
 import rstd.test;
 using namespace vectext;
-using namespace vectext::detail;
 using namespace rstd::prelude;
 #if !__is_target_os(macos) && !__is_target_os(windows)
 namespace ft = vectext::ffi::freetype;
-using vectext::detail::freetype::bitmap_coverage;
+using vectext::freetype::bitmap_coverage;
 TEST(VectextInternal, BitmapConversion) {
     unsigned char data[]{0, 1, 2, 3};
     ft::FT_Bitmap bitmap{};

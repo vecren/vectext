@@ -1,15 +1,15 @@
-module vectext:detail.collection;
-import :detail.collection.common;
+module vectext:font.collection;
+import :font.collection.common;
 #if __is_target_os(macos)
-import :detail.collection.coretext;
+import :font.collection.coretext;
 #elif __is_target_os(windows)
-import :detail.collection.directwrite;
+import :font.collection.directwrite;
 #else
-import :detail.collection.fontconfig;
+import :font.collection.fontconfig;
 #endif
-import :detail.state;
+import :font.state;
 using namespace rstd::prelude;
-namespace vectext::detail {
+namespace vectext {
 struct ResolvedGlyph {
     Arc<Font> font;
     Index glyph{};
@@ -59,4 +59,4 @@ auto resolver(Collection &collection, TextRequest request) -> Result<FontResolve
         return Err(primary.unwrap_err());
     return Ok(FontResolver{rstd::move(choices), rstd::move(primary).unwrap(), request});
 }
-} // namespace vectext::detail
+} // namespace vectext

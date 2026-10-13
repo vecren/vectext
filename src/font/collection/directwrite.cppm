@@ -1,9 +1,9 @@
-module vectext:detail.collection.directwrite;
-import :detail.state;
-import :detail.collection.common;
-import :detail.platform.directwrite;
+module vectext:font.collection.directwrite;
+import :font.state;
+import :font.collection.common;
+import :platform.directwrite;
 using namespace rstd::prelude;
-namespace vectext::detail {
+namespace vectext {
 namespace dw = directwrite::dw;
 auto candidates(Collection &c, TextRequest request) -> Result<Vec<Candidate>, TextError> {
     Vec<Candidate> output;
@@ -121,4 +121,4 @@ auto fallback_candidate(Collection &c, Vec<Candidate> &choices, TextRequest requ
             return Ok(Option<Candidate>{});
     return Ok(Some(Candidate{rstd::move(matched->pattern), {}, {}, matched->scale}));
 }
-} // namespace vectext::detail
+} // namespace vectext

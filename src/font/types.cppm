@@ -1,4 +1,4 @@
-export module vectext:font;
+export module vectext:font.types;
 import :layout;
 import :types;
 using namespace rstd::prelude;
