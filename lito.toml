@@ -18,10 +18,15 @@ rstd-std = { version = "0.1.5", pub = true }
 rstd-nostd = { version = "0.1.5", usage = "link" }
 
 [external-dependencies.pkg-config]
-fontconfig = { module = "fontconfig", version = ">= 2.14", pub = true, condition = 'target.os != "macos"' }
-freetype = { module = "freetype2", version = ">= 24.3", pub = true, condition = 'target.os != "macos"' }
+fontconfig = { module = "fontconfig", version = ">= 2.14", pub = true, condition = 'target.os != "macos" && target.os != "windows"' }
+freetype = { module = "freetype2", version = ">= 24.3", pub = true, condition = 'target.os != "macos" && target.os != "windows"' }
 
 [[when]]
 condition = 'target.os == "macos"'
 [when.usage]
 frameworks = ["CoreFoundation", "CoreText", "CoreGraphics"]
+
+[[when]]
+condition = 'target.os == "windows"'
+[when.usage]
+system-libraries = ["dwrite"]

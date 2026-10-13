@@ -74,7 +74,7 @@ struct Collection {
                 all_sources.remove(i);
                 continue;
             }
-            bytes += source->data.bytes.len().to_primitive();
+            bytes += platform::source_bytes(source->data);
             ++i;
         }
         return bytes;
@@ -131,5 +131,6 @@ struct Candidate {
     platform::Pattern pattern;
     Option<Arc<Font>> font;
     Option<Arc<Source>> source;
+    Scalar scale{1};
 };
 } // namespace vectext::detail

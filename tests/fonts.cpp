@@ -57,7 +57,7 @@ TEST(VectextFonts, SystemSmoke) {
     ASSERT_TRUE(value.is_ok());
     EXPECT_TRUE(value.unwrap().logical_bounds().width > 0);
 }
-#if !__is_target_os(macos)
+#if !__is_target_os(macos) && !__is_target_os(windows)
 TEST(VectextFonts, IsolatedFontconfig) {
     auto collection = isolated_collection();
     SystemTextService service(collection);
@@ -117,7 +117,7 @@ TEST(VectextFonts, ColorOnlyGlyphIsExplicitlyUnsupported) {
     EXPECT_EQ(layout.fonts()[usize(glyph.font)].rasterize(glyph.glyph, 1).unwrap_err(),
               TextError::Unsupported);
 }
-#if !__is_target_os(macos)
+#if !__is_target_os(macos) && !__is_target_os(windows)
 TEST(VectextFonts, FileSourcesRefreshAndBudgetLifetime) {
     auto collection = isolated_collection();
     SystemTextService service(collection);

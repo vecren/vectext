@@ -59,7 +59,8 @@ auto source_metadata(SourceData &source) -> Result<empty, TextError> {
     source.traits = ct::CTFontGetSymbolicTraits(font.get());
     return Ok(empty{});
 }
-auto parse_source(Vec<u8> bytes, Index index, ref<str>) -> Result<SourceData, TextError> {
+struct Config;
+auto parse_source(Config &, Vec<u8> bytes, Index index, ref<str>) -> Result<SourceData, TextError> {
     SourceData source;
     source.bytes = rstd::move(bytes);
     source.index = index;
@@ -268,6 +269,7 @@ struct Face {
         return Ok(rstd::move(result));
     }
 };
+auto source_bytes(const SourceData &source) -> Serial { return source.bytes.len().to_primitive(); }
 auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits)
     -> Result<empty, TextError> {
     face.font.reset(ct::CTFontCreateWithFontDescriptor(source.pattern.get(), size, nullptr));

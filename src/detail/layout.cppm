@@ -135,13 +135,10 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     auto valid = validate(request, collection.limits);
     if (valid.is_err())
         return Err(valid.unwrap_err());
-    auto matched = candidates(collection, request);
+    auto matched = resolver(collection, request);
     if (matched.is_err())
         return Err(matched.unwrap_err());
-    auto choices = rstd::move(matched).unwrap();
-    auto primary = candidate_font(collection, choices[usize()], request.size);
-    if (primary.is_err())
-        return Err(primary.unwrap_err());
+    auto fonts = rstd::move(matched).unwrap();
     auto queries = Box<Queries>::make();
     auto *query = queries.as_mut_ptr().as_raw_ptr();
     BuiltLayout result{
@@ -150,7 +147,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                            rstd::move(queries).into_raw().template cast<TextQueries>())},
         {}};
     result.data.revision = collection.counters.revision;
-    result.fonts.push(rstd::move(primary).unwrap());
+    result.fonts.push(fonts.primary.clone());
     Scalar tab_width{};
     {
         auto &font = result.fonts[usize()];
@@ -170,26 +167,12 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         if (!character.newline && ++glyph_count > collection.limits.glyphs)
             return Err(TextError::Limit);
         if (!character.newline && !character.tab) {
-            Option<Arc<Font>> selected;
-            Index glyph{};
-            for (auto &candidate : choices) {
-                if (!candidate_supports(candidate, cp))
-                    continue;
-                auto loaded = candidate_font(collection, candidate, request.size);
-                if (loaded.is_err())
-                    return Err(loaded.unwrap_err());
-                auto font = rstd::move(loaded).unwrap();
-                glyph = font->glyph(cp);
-                if (glyph) {
-                    selected = Some(rstd::move(font));
-                    break;
-                }
-            }
-            if (selected.is_none()) {
-                selected = Some(result.fonts[usize()].clone());
-                character.missing = true;
-            }
-            auto &font = *selected;
+            auto resolved = fonts.resolve(collection, cp);
+            if (resolved.is_err())
+                return Err(resolved.unwrap_err());
+            auto &font = resolved->font;
+            auto glyph = resolved->glyph;
+            character.missing = resolved->missing;
             usize slot{};
             for (; slot < result.fonts.len(); ++slot)
                 if (result.fonts[slot]->id == font->id)

@@ -12,7 +12,7 @@ struct TextLimits {
 };
 struct FontCollectionOptions {
     bool system_fonts{true};
-    // Fontconfig configuration; nonempty values are unsupported on macOS.
+    // Fontconfig configuration; nonempty values are unsupported on macOS and Windows.
     ref<str> config_file{""_str};
     TextLimits limits;
 };

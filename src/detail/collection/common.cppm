@@ -9,7 +9,7 @@ auto add_source(Collection &c, Vec<u8> bytes, Index index, String path, bool app
         return Err(TextError::Font);
     if (bytes.len().to_primitive() > c.limits.font_bytes - c.source_bytes())
         return Err(TextError::Limit);
-    auto parsed = platform::parse_source(rstd::move(bytes), index, path.as_str());
+    auto parsed = platform::parse_source(c.config, rstd::move(bytes), index, path.as_str());
     if (parsed.is_err())
         return Err(parsed.unwrap_err());
     auto source = Arc<Source>::make(rstd::move(parsed).unwrap(), rstd::move(path), application);

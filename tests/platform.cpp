@@ -155,3 +155,94 @@ TEST(VectextCoreText, SystemInstanceBudgetAndColorGlyph) {
               TextError::Unsupported);
 }
 #endif
+
+#if __is_target_os(windows)
+TEST(VectextDirectWrite, ConfigurationAndSystemIsolation) {
+    EXPECT_EQ(FontCollection::create({.config_file = "fonts.conf"_str}).unwrap_err(),
+              TextError::Unsupported);
+    auto collection = FontCollection::create({.system_fonts = false}).unwrap();
+    SystemTextService service(collection);
+    EXPECT_EQ(service.layout({.text = "A"_str}).unwrap_err(), TextError::Font);
+    auto bytes = font_data("DejaVuSans.ttf"_str);
+    collection.add_font(bytes.as_slice()).unwrap();
+    EXPECT_EQ(
+        service.layout({.text = "中"_str, .family = "Segoe UI"_str}).unwrap().missing_glyphs(), 1u);
+    EXPECT_EQ(collection.stats().font_bytes, bytes.len().to_primitive());
+}
+
+TEST(VectextDirectWrite, SystemCacheRefreshAndGenerics) {
+    auto collection = FontCollection::create().unwrap();
+    SystemTextService service(collection);
+    auto old =
+        service
+            .layout({.text = "Hello 中文"_str, .family = "sans-serif"_str, .language = "zh-CN"_str})
+            .unwrap();
+    EXPECT_EQ(old.missing_glyphs(), 0u);
+    auto warm =
+        service
+            .layout({.text = "Hello 中文"_str, .family = "sans-serif"_str, .language = "zh-CN"_str})
+            .unwrap();
+    ASSERT_EQ(old.fonts().len(), warm.fonts().len());
+    for (usize i{}; i < old.fonts().len(); ++i)
+        EXPECT_EQ(old.fonts()[i].id(), warm.fonts()[i].id());
+    EXPECT_EQ(collection.stats().font_bytes, 0u);
+    collection.clear_cache();
+    auto same = service.layout({.text = "Hello"_str, .family = "sans-serif"_str}).unwrap();
+    EXPECT_EQ(old.fonts()[usize()].id(), same.fonts()[usize()].id());
+    collection.refresh().unwrap();
+    auto fresh = service.layout({.text = "Hello"_str, .family = "sans-serif"_str}).unwrap();
+    EXPECT_TRUE(old.fonts()[usize()].id() != fresh.fonts()[usize()].id());
+    for (auto &glyph : old.glyphs())
+        EXPECT_TRUE(old.fonts()[usize(glyph.font)].rasterize(glyph.glyph, 1).is_ok());
+    auto serif = service.layout({.text = "A"_str, .family = "serif"_str}).unwrap();
+    auto mono = service.layout({.text = "iW"_str, .family = "monospace"_str}).unwrap();
+    EXPECT_TRUE(serif.fonts()[usize()].name() != fresh.fonts()[usize()].name());
+    EXPECT_TRUE(__builtin_fabs(mono.glyphs()[usize()].advance - mono.glyphs()[usize(1)].advance) <
+                .01);
+    auto bold = service.layout({.text = "A"_str, .family = "Segoe UI"_str, .bold = true}).unwrap();
+    auto italic =
+        service.layout({.text = "A"_str, .family = "Times New Roman"_str, .italic = true}).unwrap();
+    EXPECT_TRUE(bold.fonts()[usize()].name()->contains("Bold"_str));
+    EXPECT_TRUE(italic.fonts()[usize()].name()->contains("Italic"_str));
+    EXPECT_TRUE(
+        service.layout({.text = "A"_str, .family = "Vectext nonexistent family"_str}).is_ok());
+}
+
+TEST(VectextDirectWrite, SystemFallbackBudgetAndLifetime) {
+    SystemTextService scalar;
+    auto supplementary =
+        scalar.layout({.text = "A\U0001d538B"_str, .family = "Segoe UI"_str}).unwrap();
+    ASSERT_EQ(supplementary.glyphs().len(), usize(3));
+    EXPECT_EQ(supplementary.missing_glyphs(), 0u);
+    EXPECT_EQ(supplementary.glyphs()[usize(1)].byte_start, 1u);
+    EXPECT_EQ(supplementary.glyphs()[usize(1)].byte_end, 5u);
+    EXPECT_EQ(scalar.layout({.text = "\U0010ffff"_str}).unwrap().missing_glyphs(), 1u);
+    TextLimits limits;
+    limits.fallback_attempts = 1;
+    auto bounded = FontCollection::create({.limits = limits}).unwrap();
+    SystemTextService restricted(bounded);
+    EXPECT_EQ(
+        restricted.layout({.text = "中"_str, .family = "Segoe UI"_str}).unwrap().missing_glyphs(),
+        1u);
+    limits.fallback_attempts = 2;
+    limits.font_instances = 1;
+    auto single = FontCollection::create({.limits = limits}).unwrap();
+    SystemTextService one(single);
+    auto kept = one.layout({.text = "A"_str, .family = "Segoe UI"_str}).unwrap();
+    EXPECT_EQ(one.layout({.text = "中"_str, .family = "Segoe UI"_str}).unwrap_err(),
+              TextError::Limit);
+    EXPECT_TRUE(one.layout({.text = "B"_str, .family = "Segoe UI"_str}).is_ok());
+    auto detached = [] {
+        SystemTextService service;
+        return service.layout({.text = "F中"_str, .family = "Segoe UI"_str}).unwrap();
+    }();
+    EXPECT_EQ(detached.missing_glyphs(), 0u);
+    for (auto &glyph : detached.glyphs()) {
+        auto bitmap = detached.fonts()[usize(glyph.font)].rasterize(glyph.glyph, 1).unwrap();
+        bool gray{};
+        for (auto pixel : bitmap.coverage)
+            gray |= pixel > 0 && pixel < 255;
+        EXPECT_TRUE(gray);
+    }
+}
+#endif

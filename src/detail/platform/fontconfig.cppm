@@ -36,7 +36,8 @@ auto make_config(bool system, ref<str> path_text) -> Result<Config, TextError> {
     return Ok(rstd::move(result));
 }
 
-auto parse_source(Vec<u8> bytes, Index index, ref<str> path) -> Result<SourceData, TextError> {
+auto parse_source(Config &, Vec<u8> bytes, Index index, ref<str> path)
+    -> Result<SourceData, TextError> {
     ft::Library library;
     ft::Face face;
     if (ft::FT_Init_FreeType(library.put()) ||
@@ -58,6 +59,7 @@ auto parse_source(Vec<u8> bytes, Index index, ref<str> path) -> Result<SourceDat
         return Err(TextError::Font);
     return Ok(SourceData{rstd::move(bytes), index, rstd::move(name), rstd::move(pattern)});
 }
+auto source_bytes(const SourceData &source) -> Serial { return source.bytes.len().to_primitive(); }
 auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits)
     -> Result<empty, TextError> {
     return face.initialize(source.bytes.as_slice(), source.index, size, limits);

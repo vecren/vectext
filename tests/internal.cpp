@@ -3,7 +3,7 @@ module;
 module vectext;
 import :detail.raster;
 import :detail.layout;
-#if !__is_target_os(macos)
+#if !__is_target_os(macos) && !__is_target_os(windows)
 import vectext.ffi.freetype;
 import :detail.platform.freetype;
 #endif
@@ -11,7 +11,7 @@ import rstd.test;
 using namespace vectext;
 using namespace vectext::detail;
 using namespace rstd::prelude;
-#if !__is_target_os(macos)
+#if !__is_target_os(macos) && !__is_target_os(windows)
 namespace ft = vectext::ffi::freetype;
 using vectext::detail::freetype::bitmap_coverage;
 TEST(VectextInternal, BitmapConversion) {
@@ -56,3 +56,29 @@ TEST(VectextInternal, RejectInvalidUtf8) {
         EXPECT_EQ(validate_text(bytes).unwrap_err(), TextError::InvalidUtf8);
     }
 }
+
+#if __is_target_os(windows)
+TEST(VectextDirectWriteInternal, FallbackScaleAndCache) {
+    using namespace rstd::literals;
+    Collection collection(true, String(), {});
+    collection.config = collection.make_config().unwrap();
+    TextRequest request{.family = "Segoe UI"_str, .size = 32};
+    auto choices = candidates(collection, request).unwrap();
+    auto normal = candidate_font(collection, choices[usize()], request.size).unwrap();
+    Candidate scaled{directwrite::dw::retain(choices[usize()].pattern.get()), {}, {}, 1.5};
+    auto large = candidate_font(collection, scaled, request.size).unwrap();
+    EXPECT_TRUE(normal->id != large->id);
+    EXPECT_EQ(large->size, 48.0);
+    EXPECT_TRUE(__builtin_fabs(large->ascent / normal->ascent - 1.5) < .0001);
+    auto glyph = normal->glyph('F');
+    auto a = normal->measure(glyph).unwrap(), b = large->measure(glyph).unwrap();
+    EXPECT_TRUE(__builtin_fabs(b.advance / a.advance - 1.5) < .0001);
+    EXPECT_TRUE(__builtin_fabs(b.ink.height / a.ink.height - 1.5) < .0001);
+    auto small_bitmap = normal->rasterize(glyph, 1).unwrap();
+    auto large_bitmap = large->rasterize(glyph, 1).unwrap();
+    EXPECT_TRUE(large_bitmap.height > small_bitmap.height);
+    EXPECT_TRUE(large_bitmap.width > small_bitmap.width);
+    Candidate again{directwrite::dw::retain(choices[usize()].pattern.get()), {}, {}, 1.5};
+    EXPECT_EQ(candidate_font(collection, again, request.size).unwrap()->id, large->id);
+}
+#endif
