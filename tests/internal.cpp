@@ -3,11 +3,17 @@ module;
 module vectext;
 import :detail.raster;
 import :detail.layout;
+#if !__is_target_os(macos)
 import vectext.ffi.freetype;
+import :detail.platform.freetype;
+#endif
 import rstd.test;
 using namespace vectext;
 using namespace vectext::detail;
 using namespace rstd::prelude;
+#if !__is_target_os(macos)
+namespace ft = vectext::ffi::freetype;
+using vectext::detail::freetype::bitmap_coverage;
 TEST(VectextInternal, BitmapConversion) {
     unsigned char data[]{0, 1, 2, 3};
     ft::FT_Bitmap bitmap{};
@@ -39,6 +45,7 @@ TEST(VectextInternal, BitmapConversion) {
     limits.bitmap_bytes = 3;
     EXPECT_EQ(bitmap_coverage(bitmap, limits).unwrap_err(), TextError::Limit);
 }
+#endif
 TEST(VectextInternal, RejectInvalidUtf8) {
     const unsigned char invalid[][4]{
         {0xc0, 0xaf, 0, 0}, {0xed, 0xa0, 0x80, 0}, {0xf4, 0x90, 0x80, 0x80}, {0xe4, 0xb8, 0, 0}};

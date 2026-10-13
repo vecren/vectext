@@ -1,45 +1,26 @@
-module;
-#include <string.h>
 module vectext:detail.state;
 import :font;
 import :layout;
 import :types;
-import vectext.ffi.fontconfig;
-import vectext.ffi.freetype;
+import :detail.platform;
+import :detail.platform.common;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
 namespace vectext::detail {
-namespace fc = ffi::fontconfig;
-namespace ft = ffi::freetype;
 using rstd::sync::Arc;
 using rstd::sync::Weak;
-inline auto string_view(const char *s) -> ref<str> {
-    return ref<str>::from_raw_parts_unchecked(reinterpret_cast<const rstd::byte *>(s),
-                                              usize(strlen(s)));
-}
-inline auto terminated(ref<str> s) -> Vec<char> {
-    Vec<char> out;
-    out.reserve(s->len() + usize(1));
-    for (auto b : s->as_bytes())
-        out.push(static_cast<char>(b.to_primitive()));
-    out.push('\0');
-    return out;
-}
 struct Source {
-    Vec<u8> bytes;
-    Index index{};
+    platform::SourceData data;
     Serial id{new_identity()}, revision{};
-    String path, name;
-    fc::Pattern pattern;
-    Source(Vec<u8> bytes, Index index, String path, String name, fc::Pattern pattern)
-        : bytes(rstd::move(bytes)), index(index), path(rstd::move(path)), name(rstd::move(name)),
-          pattern(rstd::move(pattern)) {}
+    String path;
+    bool application{};
+    Source(platform::SourceData data, String path, bool application)
+        : data(rstd::move(data)), path(rstd::move(path)), application(application) {}
 };
 struct Font {
     Arc<Source> source;
-    ft::Library library;
-    ft::Face face;
+    platform::Face native;
     Scalar size{}, ascent{}, descent{}, height{};
     Serial id{new_identity()}, revision{};
     TextLimits limits;
@@ -47,31 +28,28 @@ struct Font {
     Font(Arc<Source> source, Scalar size, Serial revision, TextLimits limits)
         : source(rstd::move(source)), size(size), revision(revision), limits(limits) {}
     auto initialize() -> Result<empty, TextError> {
-        if (ft::FT_Init_FreeType(library.put()) ||
-            ft::FT_New_Memory_Face(
-                library.get(),
-                reinterpret_cast<const unsigned char *>(source->bytes.as_slice().as_raw_ptr()),
-                source->bytes.len().to_primitive(), source->index, face.put()) ||
-            !ft::is_scalable(face.get()) ||
-            ft::FT_Select_Charmap(face.get(), ft::FT_ENCODING_UNICODE))
-            return Err(TextError::Font);
-        auto status = set_size(1);
-        if (status.is_err())
-            return status;
-        ascent = face->size->metrics.ascender / 64.0;
-        descent = -face->size->metrics.descender / 64.0;
-        height = face->size->metrics.height / 64.0;
-        if (height < ascent + descent)
-            height = ascent + descent;
-        if (height <= 0)
+        auto result = platform::initialize(native, source->data, size, limits);
+        if (result.is_err())
+            return result;
+        ascent = native.ascent;
+        descent = native.descent;
+        height = native.height;
+        if (!finite(ascent) || !finite(descent) || !finite(height) || ascent < 0 || descent < 0 ||
+            height <= 0)
             return Err(TextError::Font);
         return Ok(empty{});
     }
-    auto set_size(Scalar scale) -> Result<empty, TextError> {
-        if (ft::FT_Set_Char_Size(face.get(), 0, static_cast<ft::FT_F26Dot6>(size * scale * 64 + .5),
-                                 72, 72))
-            return Err(TextError::Font);
-        return Ok(empty{});
+    auto glyph(Index codepoint) -> Index {
+        auto guard = mutex.lock().unwrap();
+        return native.glyph(codepoint);
+    }
+    auto measure(Index glyph) -> Result<GlyphMetrics, TextError> {
+        auto guard = mutex.lock().unwrap();
+        return native.measure(glyph);
+    }
+    auto rasterize(Index glyph, Scalar scale) -> Result<GlyphBitmap, TextError> {
+        auto guard = mutex.lock().unwrap();
+        return native.rasterize(glyph, scale);
     }
 };
 struct Collection {
@@ -80,10 +58,9 @@ struct Collection {
     String config_path;
     TextLimits limits;
     FontStats counters{.revision = new_identity()};
-    fc::Config config;
+    platform::Config config;
     Vec<Arc<Source>> sources;
     Vec<Weak<Source>> all_sources;
-    int next_application{};
     Vec<Weak<Font>> instances;
     Vec<Arc<Font>> retained;
     rstd::sync::Mutex<empty> mutex;
@@ -97,7 +74,7 @@ struct Collection {
                 all_sources.remove(i);
                 continue;
             }
-            bytes += source->bytes.len().to_primitive();
+            bytes += source->data.bytes.len().to_primitive();
             ++i;
         }
         return bytes;
@@ -105,31 +82,15 @@ struct Collection {
     void clear_cache() {
         retained.clear();
         for (usize i{}; i < sources.len();) {
-            if (!sources[i]->path.is_empty()) {
+            if (!sources[i]->application) {
                 sources.remove(i);
                 continue;
             }
             ++i;
         }
     }
-    auto make_config() -> Result<fc::Config, TextError> {
-        fc::Config result;
-        if (config_path.is_empty())
-            result.reset(system ? fc::FcInitLoadConfigAndFonts() : fc::FcConfigCreate());
-        else {
-            result.reset(fc::FcConfigCreate());
-            auto path = terminated(config_path.as_str());
-            if (!result ||
-                !fc::FcConfigParseAndLoad(
-                    result.get(),
-                    reinterpret_cast<const fc::FcChar8 *>(path.as_slice().as_raw_ptr()),
-                    fc::FcTrue) ||
-                !fc::FcConfigBuildFonts(result.get()))
-                return Err(TextError::Font);
-        }
-        if (!result)
-            return Err(TextError::Font);
-        return Ok(rstd::move(result));
+    auto make_config() -> Result<platform::Config, TextError> {
+        return platform::make_config(system, config_path.as_str());
     }
     auto font(Arc<Source> source, Scalar size) -> Result<Arc<Font>, TextError> {
         Serial alive{};
@@ -167,7 +128,8 @@ struct Collection {
     }
 };
 struct Candidate {
-    fc::Pattern pattern;
+    platform::Pattern pattern;
     Option<Arc<Font>> font;
+    Option<Arc<Source>> source;
 };
 } // namespace vectext::detail

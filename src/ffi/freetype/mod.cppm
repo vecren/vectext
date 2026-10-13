@@ -36,13 +36,13 @@ inline constexpr auto FT_LOAD_NO_BITMAP = vectext_freetype_constants::k_FT_LOAD_
 inline constexpr auto FT_LOAD_NO_HINTING = vectext_freetype_constants::k_FT_LOAD_NO_HINTING;
 inline bool is_scalable(FT_Face face) { return FT_IS_SCALABLE(face); }
 
+using ::FT_COLOR_NO_ROOT_TRANSFORM;
 using ::FT_Get_Char_Index;
 using ::FT_Get_Color_Glyph_Layer;
 using ::FT_Get_Color_Glyph_Paint;
 using ::FT_LayerIterator;
 using ::FT_OpaquePaint;
 using ::FT_UInt;
-using ::FT_COLOR_NO_ROOT_TRANSFORM;
 using Library = Owner<FT_LibraryRec_, FT_Done_FreeType>;
 using Face = Owner<FT_FaceRec_, FT_Done_Face>;
 } // namespace vectext::ffi::freetype

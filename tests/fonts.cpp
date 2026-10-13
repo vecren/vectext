@@ -57,6 +57,7 @@ TEST(VectextFonts, SystemSmoke) {
     ASSERT_TRUE(value.is_ok());
     EXPECT_TRUE(value.unwrap().logical_bounds().width > 0);
 }
+#if !__is_target_os(macos)
 TEST(VectextFonts, IsolatedFontconfig) {
     auto collection = isolated_collection();
     SystemTextService service(collection);
@@ -65,6 +66,7 @@ TEST(VectextFonts, IsolatedFontconfig) {
     EXPECT_EQ(layout.fonts().len(), usize(2));
     EXPECT_TRUE(collection.stats().font_bytes > 0);
 }
+#endif
 TEST(VectextFonts, Budgets) {
     TextLimits limits;
     limits.font_instances = 1;
@@ -115,6 +117,7 @@ TEST(VectextFonts, ColorOnlyGlyphIsExplicitlyUnsupported) {
     EXPECT_EQ(layout.fonts()[usize(glyph.font)].rasterize(glyph.glyph, 1).unwrap_err(),
               TextError::Unsupported);
 }
+#if !__is_target_os(macos)
 TEST(VectextFonts, FileSourcesRefreshAndBudgetLifetime) {
     auto collection = isolated_collection();
     SystemTextService service(collection);
@@ -136,6 +139,7 @@ TEST(VectextFonts, FileSourcesRefreshAndBudgetLifetime) {
     EXPECT_EQ(collection.stats().font_bytes, 0u);
     EXPECT_EQ(collection.stats().instances, 0u);
 }
+#endif
 TEST(VectextFonts, GlyphBudgetAndFallbackLimit) {
     TextLimits limits;
     limits.glyphs = 1;

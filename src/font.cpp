@@ -118,7 +118,7 @@ auto SystemTextService::layout(TextRequest request) -> Result<TextLayout, TextEr
     for (auto &font : result.fonts) {
         auto rasterizer = Box<Rasterizer>::make(font.clone());
         result.data.fonts.push(
-            FontInstance(font->id, font->source->name.clone(),
+            FontInstance(font->id, font->source->data.name.clone(),
                          Box<FontRasterizer>::from_raw(
                              rstd::move(rasterizer).into_raw().template cast<FontRasterizer>())));
     }

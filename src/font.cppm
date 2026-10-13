@@ -12,9 +12,11 @@ struct TextLimits {
 };
 struct FontCollectionOptions {
     bool system_fonts{true};
+    // Fontconfig configuration; nonempty values are unsupported on macOS.
     ref<str> config_file{""_str};
     TextLimits limits;
 };
+// font_bytes counts owned font data, excluding native system font caches.
 struct FontStats {
     Serial revision{}, font_bytes{}, instances{}, font_loads{}, font_hits{}, layouts{};
 };

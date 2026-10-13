@@ -5,8 +5,7 @@ import :detail.queries;
 import :layout;
 import :font;
 import :types;
-import vectext.ffi.fontconfig;
-import vectext.ffi.freetype;
+
 using namespace rstd::prelude;
 namespace vectext::detail {
 struct Character {
@@ -155,14 +154,10 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     Scalar tab_width{};
     {
         auto &font = result.fonts[usize()];
-        auto guard = font->mutex.lock().unwrap();
-        auto size = font->set_size(1);
-        if (size.is_err())
-            return Err(size.unwrap_err());
-        if (ft::FT_Load_Glyph(font->face.get(), ft::FT_Get_Char_Index(font->face.get(), ' '),
-                              ft::FT_LOAD_NO_HINTING | ft::FT_LOAD_NO_BITMAP))
-            return Err(TextError::Font);
-        tab_width = font->face->glyph->advance.x / 64.0 * 8;
+        auto metrics = font->measure(font->glyph(' '));
+        if (metrics.is_err())
+            return Err(metrics.unwrap_err());
+        tab_width = metrics->advance * 8;
         if (tab_width <= 0)
             tab_width = request.size * 4;
     }
@@ -178,19 +173,13 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
             Option<Arc<Font>> selected;
             Index glyph{};
             for (auto &candidate : choices) {
-                fc::FcCharSet *charset{};
-                if (fc::FcPatternGetCharSet(candidate.pattern.get(), fc::FC_CHARSET, 0, &charset) ==
-                        fc::FcResultMatch &&
-                    !fc::FcCharSetHasChar(charset, cp))
+                if (!candidate_supports(candidate, cp))
                     continue;
                 auto loaded = candidate_font(collection, candidate, request.size);
                 if (loaded.is_err())
                     return Err(loaded.unwrap_err());
                 auto font = rstd::move(loaded).unwrap();
-                {
-                    auto guard = font->mutex.lock().unwrap();
-                    glyph = ft::FT_Get_Char_Index(font->face.get(), cp);
-                }
+                glyph = font->glyph(cp);
                 if (glyph) {
                     selected = Some(rstd::move(font));
                     break;
@@ -209,17 +198,11 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                 result.fonts.push(font.clone());
             character.font = static_cast<Index>(slot.to_primitive());
             character.glyph = glyph;
-            auto guard = font->mutex.lock().unwrap();
-            auto size = font->set_size(1);
-            if (size.is_err())
-                return Err(size.unwrap_err());
-            if (ft::FT_Load_Glyph(font->face.get(), glyph,
-                                  ft::FT_LOAD_NO_HINTING | ft::FT_LOAD_NO_BITMAP))
-                return Err(TextError::Font);
-            auto &m = font->face->glyph->metrics;
-            character.advance = font->face->glyph->advance.x / 64.0;
-            character.ink = {m.horiBearingX / 64.0, -m.horiBearingY / 64.0, m.width / 64.0,
-                             m.height / 64.0};
+            auto measured = font->measure(glyph);
+            if (measured.is_err())
+                return Err(measured.unwrap_err());
+            character.advance = measured->advance;
+            character.ink = measured->ink;
             if (!finite(character.advance) || character.advance < 0 || !character.ink.valid())
                 return Err(TextError::Font);
         }
