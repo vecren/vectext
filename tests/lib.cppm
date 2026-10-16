@@ -16,6 +16,7 @@ auto data_path(ref<str> name) -> rstd::path::PathBuf {
 } // namespace
 
 export namespace vectext::tests {
+auto data_text(ref<str> name) -> String { return rstd::fs::read_to_string(data_path(name).as_path()).unwrap(); }
 auto font_data(ref<str> name) -> Vec<unsigned char> {
     auto path = data_path(name);
     auto bytes = rstd::fs::read(path.as_path()).unwrap();

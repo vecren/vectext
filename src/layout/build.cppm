@@ -135,6 +135,8 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     auto valid = validate(request, collection.limits);
     if (valid.is_err())
         return Err(valid.unwrap_err());
+    if (request.boundaries && (!request.boundaries->present() || request.boundaries->text() != request.text))
+        return Err(TextError::InvalidValue);
     auto matched = resolver(collection, request);
     if (matched.is_err())
         return Err(matched.unwrap_err());
@@ -146,6 +148,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                        .queries = Box<TextQueries>::from_raw(
                            rstd::move(queries).into_raw().template cast<TextQueries>())},
         {}};
+    if (request.boundaries) result.data.boundaries = *request.boundaries;
     result.data.revision = collection.counters.revision;
     result.fonts.push(fonts.primary.clone());
     Scalar tab_width{};

@@ -1,5 +1,6 @@
 export module vectext:layout.types;
 export import vectext.error;
+export import :boundaries;
 import :types;
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -18,9 +19,6 @@ enum class TextOverflow { Clip, ThreeDots };
 enum class TextTabs { Stops, Ignore };
 enum class TextWhitespace { Preserve, TrimWrap };
 enum class InvalidText { Reject, Replace };
-struct TextRange {
-    Index start{}, end{};
-};
 struct TextRequest {
     ref<str> text{""_str}, family{"sans"_str}, language{"und"_str};
     Scalar size{16};
@@ -38,6 +36,7 @@ struct TextRequest {
     // Byte input is decoded once; all result indices refer to normalized text().
     Option<slice<u8>> bytes;
     InvalidText invalid_text{InvalidText::Reject};
+    const TextBoundaries *boundaries{};
 };
 struct TextFormat {
     ref<str> family{"sans"_str}, language{"und"_str};
@@ -150,6 +149,7 @@ struct TextLayoutData {
     Vec<TextRun> runs;
     Serial revision{};
     Option<TextRange> hidden;
+    TextBoundaries boundaries;
 };
 class TextLayout {
     struct Data {
@@ -171,6 +171,13 @@ class TextLayout {
     TextLayout(TextLayout &&) = default;
     auto operator=(TextLayout &&) -> TextLayout & = default;
     static auto create(TextLayoutData data) -> Result<TextLayout, TextError> {
+        if (data.boundaries.present()) {
+            if (data.boundaries.text() != data.text.as_str()) return Err(TextError::InvalidValue);
+        } else {
+            auto boundaries = TextBoundaries::create(data.text.as_str());
+            if (boundaries.is_err()) return Err(boundaries.unwrap_err());
+            data.boundaries = rstd::move(boundaries).unwrap();
+        }
         auto bytes = data.text.as_str()->len().to_primitive();
         if (!data.logical.valid() || !data.ink.valid() || !finite(data.baseline) ||
             data.lines.is_empty())
@@ -252,6 +259,7 @@ class TextLayout {
     auto hidden_range() const -> Option<TextRange> { return data_->value.hidden; }
     auto revision() const -> Serial { return data_->value.revision; }
     auto lines() const -> slice<TextLine> { return data_->value.lines.as_slice(); }
+    auto boundaries() const -> const TextBoundaries & { return data_->value.boundaries; }
     auto hit(Point point) const -> Result<TextHit, TextError> {
         if (!finite(point.x) || !finite(point.y))
             return Err(TextError::InvalidValue);
@@ -272,6 +280,27 @@ class TextLayout {
         if (result.is_ok() && !result.unwrap().bounds.valid())
             return Err(TextError::Layout);
         return result;
+    }
+    auto caret_grapheme(Index byte_index, TextAffinity affinity = TextAffinity::Downstream) const -> Result<TextCaret, TextError> {
+        if (!boundaries().contains(byte_index)) return Err(TextError::InvalidIndex);
+        return caret(byte_index, affinity);
+    }
+    auto hit_grapheme(Point point) const -> Result<TextHit, TextError> {
+        auto result = hit(point);
+        if (result.is_err()) return result;
+        auto found = result.unwrap();
+        auto before = boundaries().snap(found.byte_index, TextBoundaryBias::Before);
+        auto after = boundaries().snap(found.byte_index, TextBoundaryBias::After);
+        if (before.is_err() || after.is_err()) return Err(TextError::Layout);
+        if (before.unwrap() == after.unwrap()) return result;
+        auto left = caret(before.unwrap(), found.affinity), right = caret(after.unwrap(), found.affinity);
+        if (left.is_err() || right.is_err()) return Err(TextError::Layout);
+        auto distance = [&](Rect rect) {
+            auto x = point.x - rect.x, y = point.y - rect.y - rect.height / 2;
+            return x * x + y * y;
+        };
+        found.byte_index = distance(left.unwrap().bounds) <= distance(right.unwrap().bounds) ? before.unwrap() : after.unwrap();
+        return Ok(found);
     }
 };
 struct TextService {

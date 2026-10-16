@@ -8,7 +8,7 @@ rstd-nostd = { version = "0.1.5", usage = "link" }
 
 [[test]]
 name = "vectext"
-sources = ["lib.cppm", "main.cpp", "text.cpp", "fonts.cpp", "unicode.cpp", "performance.cpp", "platform.cpp"]
+sources = ["lib.cppm", "main.cpp", "text.cpp", "fonts.cpp", "unicode.cpp", "boundaries.cpp", "performance.cpp", "platform.cpp"]
 link-stdlib = false
 
 [[test.attach]]

@@ -18,6 +18,7 @@ rstd-std = { version = "0.1.5", pub = true }
 rstd-nostd = { version = "0.1.5", usage = "link" }
 
 [external-dependencies.pkg-config]
+icu = { module = "icu-uc", version = ">= 78", pub = true }
 fontconfig = { module = "fontconfig", version = ">= 2.14", pub = true, condition = 'target.os != "macos" && target.os != "windows"' }
 freetype = { module = "freetype2", version = ">= 24.3", pub = true, condition = 'target.os != "macos" && target.os != "windows"' }
 
