@@ -19,6 +19,77 @@ enum class TextOverflow { Clip, ThreeDots };
 enum class TextTabs { Stops, Ignore };
 enum class TextWhitespace { Preserve, TrimWrap };
 enum class InvalidText { Reject, Replace };
+enum class TextInlineUnit { Logical, Em };
+struct TextInlineObject {
+    TextRange range;
+    Scalar advance{}, ascent{}, descent{};
+    Rect ink;
+    TextInlineUnit unit{TextInlineUnit::Logical};
+    auto valid() const -> bool {
+        return finite(advance) && advance >= 0 && finite(ascent) && ascent >= 0 &&
+            finite(descent) && descent >= 0 && ink.valid() &&
+            (unit == TextInlineUnit::Logical || unit == TextInlineUnit::Em);
+    }
+    auto scaled(Scalar em) const -> Result<TextInlineObject, TextError> {
+        if (!valid() || !finite(em) || em <= 0) return Err(TextError::InvalidValue);
+        auto factor = unit == TextInlineUnit::Em ? em : 1;
+        TextInlineObject result{range, advance * factor, ascent * factor, descent * factor,
+            {ink.x * factor, ink.y * factor, ink.width * factor, ink.height * factor}};
+        if (!result.valid() || result.advance > 1048576 || result.ascent + result.descent > 1048576 ||
+            __builtin_fabs(result.ink.x) > 1048576 || __builtin_fabs(result.ink.y) > 1048576 ||
+            result.ink.width > 1048576 || result.ink.height > 1048576) return Err(TextError::Limit);
+        return Ok(result);
+    }
+    auto operator==(const TextInlineObject &) const -> bool = default;
+};
+class TextInlineObjects {
+    struct Data {
+        String text;
+        Vec<TextInlineObject> objects;
+        Data(ref<str> text, Vec<TextInlineObject> objects) : text(String::make(text)), objects(rstd::move(objects)) {}
+    };
+    Option<rstd::sync::Arc<Data>> data_;
+    TextInlineObjects(ref<str> text, Vec<TextInlineObject> objects)
+        : data_(Some(rstd::sync::Arc<Data>::make(text, rstd::move(objects)))) {}
+  public:
+    TextInlineObjects() = default;
+    TextInlineObjects(const TextInlineObjects &other) : data_(other.data_.is_some() ? Some(other.data_->clone()) : None<rstd::sync::Arc<Data>>()) {}
+    auto operator=(const TextInlineObjects &other) -> TextInlineObjects & {
+        if (this != &other) data_ = other.data_.is_some() ? Some(other.data_->clone()) : None<rstd::sync::Arc<Data>>();
+        return *this;
+    }
+    TextInlineObjects(TextInlineObjects &&) = default;
+    auto operator=(TextInlineObjects &&) -> TextInlineObjects & = default;
+    static auto create(ref<str> text, slice<TextInlineObject> objects) -> Result<TextInlineObjects, TextError> {
+        if (text->len() > usize(~Index{})) return Err(TextError::InvalidValue);
+        Index end{};
+        for (const auto &object : objects) {
+            auto range = object.range;
+            if (!object.valid() || range.start < end || range.end < range.start || range.end - range.start != 3 ||
+                usize(range.end) > text->len() || text->as_bytes()[usize(range.start)] != u8(0xef) ||
+                text->as_bytes()[usize(range.start + 1)] != u8(0xbf) || text->as_bytes()[usize(range.start + 2)] != u8(0xbc))
+                return Err(TextError::InvalidValue);
+            end = range.end;
+        }
+        if (objects.is_empty()) return Ok(TextInlineObjects{});
+        return Ok(TextInlineObjects(text, Vec<TextInlineObject>::from(objects)));
+    }
+    auto objects() const -> slice<TextInlineObject> { return data_.is_some() ? (*data_)->objects.as_slice() : slice<TextInlineObject>{}; }
+    auto matches(ref<str> text) const -> bool { return data_.is_none() || (*data_)->text.as_str() == text; }
+    auto overlaps(TextRange range) const -> bool {
+        auto values = objects(); usize first{}, last = values.len();
+        while (first < last) {
+            auto middle = first + (last - first) / usize(2);
+            if (values[middle].range.end <= range.start) first = middle + usize(1); else last = middle;
+        }
+        return range.start < range.end && first < values.len() && values[first].range.start < range.end;
+    }
+    auto operator==(const TextInlineObjects &other) const -> bool {
+        if (data_.is_none() || other.data_.is_none()) return data_.is_none() && other.data_.is_none();
+        return rstd::sync::Arc<Data>::ptr_eq(*data_, *other.data_) ||
+            ((*data_)->text == (*other.data_)->text && objects() == other.objects());
+    }
+};
 struct TextRequest {
     ref<str> text{""_str}, family{"sans"_str}, language{"und"_str};
     Scalar size{16};
@@ -37,6 +108,7 @@ struct TextRequest {
     Option<slice<u8>> bytes;
     InvalidText invalid_text{InvalidText::Reject};
     const TextBoundaries *boundaries{};
+    TextInlineObjects inline_objects;
 };
 struct TextFormat {
     ref<str> family{"sans"_str}, language{"und"_str};
@@ -135,6 +207,10 @@ struct TextRangeBox {
     Scalar baseline{};
     auto operator==(const TextRangeBox &) const -> bool = default;
 };
+struct TextInlineBox {
+    Index object{}, line{};
+    Rect logical, ink;
+};
 struct TextQueries {
     virtual ~TextQueries() = default;
     virtual auto hit(Point point) const -> Result<TextHit, TextError> = 0;
@@ -156,6 +232,8 @@ struct TextLayoutData {
     Serial revision{};
     Option<TextRange> hidden;
     TextBoundaries boundaries;
+    TextInlineObjects inline_objects;
+    Vec<TextInlineBox> inline_boxes;
 };
 class TextLayout {
     struct Data {
@@ -189,6 +267,7 @@ class TextLayout {
             data.lines.is_empty())
             return Err(TextError::InvalidValue);
         auto text = data.text.as_str();
+        if (!data.inline_objects.matches(text)) return Err(TextError::InvalidValue);
         if (data.hidden.is_some() &&
             (data.hidden->start > data.hidden->end || data.hidden->end != bytes ||
              !text->is_char_boundary(usize(data.hidden->start))))
@@ -205,6 +284,7 @@ class TextLayout {
             if (glyph.synthetic &&
                 (data.hidden.is_none() || glyph.byte_start != data.hidden->start))
                 return Err(TextError::InvalidValue);
+            if (data.inline_objects.overlaps({glyph.byte_start, glyph.byte_end})) return Err(TextError::InvalidValue);
             if (glyph.missing)
                 ++missing;
         }
@@ -251,6 +331,22 @@ class TextLayout {
         }
         if (!data.runs.is_empty() && usize(run_glyph) != data.glyphs.len())
             return Err(TextError::InvalidValue);
+        usize box_index{};
+        auto objects = data.inline_objects.objects();
+        for (usize i{}; i < objects.len(); ++i) {
+            const auto &object = objects[i];
+            if (data.hidden.is_some() && object.range.start >= data.hidden->start) break;
+            if (box_index >= data.inline_boxes.len()) return Err(TextError::InvalidValue);
+            const auto &box = data.inline_boxes[box_index++];
+            if (box.object != i.to_primitive() || usize(box.line) >= data.lines.len() || !box.logical.valid() || !box.ink.valid())
+                return Err(TextError::InvalidValue);
+            if (box_index > usize(1) && box.line < data.inline_boxes[box_index - usize(2)].line) return Err(TextError::InvalidValue);
+            const auto &line = data.lines[usize(box.line)];
+            if (object.range.start < line.byte_start || object.range.end > line.byte_end ||
+                box.logical.y != line.logical.y || box.logical.height != line.logical.height)
+                return Err(TextError::InvalidValue);
+        }
+        if (box_index != data.inline_boxes.len()) return Err(TextError::InvalidValue);
         return Ok(TextLayout(rstd::move(data)));
     }
     auto id() const -> Serial { return data_->id; }
@@ -266,6 +362,8 @@ class TextLayout {
     auto revision() const -> Serial { return data_->value.revision; }
     auto lines() const -> slice<TextLine> { return data_->value.lines.as_slice(); }
     auto boundaries() const -> const TextBoundaries & { return data_->value.boundaries; }
+    auto inline_objects() const -> const TextInlineObjects & { return data_->value.inline_objects; }
+    auto inline_boxes() const -> slice<TextInlineBox> { return data_->value.inline_boxes.as_slice(); }
     // Logical advances cover whole intersecting clusters, excluding synthetic glyphs.
     auto range_boxes(TextRange range) const -> Result<Vec<TextRangeBox>, TextError> {
         if (range.start > range.end || usize(range.end) > text()->len() ||
@@ -275,6 +373,7 @@ class TextLayout {
         if (range.start == range.end) return Ok(rstd::move(result));
         if (data_->value.hidden.is_some() && range.end > data_->value.hidden->start)
             range.end = data_->value.hidden->start;
+        usize object_begin{};
         for (usize line_index{}; line_index < lines().len(); ++line_index) {
             const auto &line = lines()[line_index];
             if (range.start >= line.byte_end || range.end <= line.byte_start) continue;
@@ -287,6 +386,13 @@ class TextLayout {
                 Rect bounds{left, line.logical.y, right - left, line.logical.height};
                 if (!bounds.valid()) return Err(TextError::Layout);
                 if (bounds.width > 0 && bounds.height > 0) intervals.push(rstd::move(bounds));
+            }
+            auto boxes = inline_boxes();
+            while (object_begin < boxes.len() && boxes[object_begin].line < line_index.to_primitive()) ++object_begin;
+            for (auto i = object_begin; i < boxes.len() && boxes[i].line == line_index.to_primitive(); ++i) {
+                auto object_range = inline_objects().objects()[usize(boxes[i].object)].range;
+                if (object_range.start < range.end && object_range.end > range.start && boxes[i].logical.width > 0 && boxes[i].logical.height > 0)
+                    intervals.push(Rect(boxes[i].logical));
             }
             rstd::slice_::sort_unstable_by(intervals.as_mut_slice().as_mut_ref(),
                 [](const Rect &left, const Rect &right) { return left.x < right.x; });

@@ -10,7 +10,9 @@ using namespace rstd::prelude;
 namespace vectext {
 struct Character {
     Index code{}, begin{}, end{}, font{}, glyph{};
+    Index object{~Index{}};
     Scalar advance{};
+    Scalar ascent{}, descent{};
     Rect ink;
     bool newline{}, tab{}, missing{}, synthetic{};
 };
@@ -73,6 +75,7 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
     }
     if (request.direction == TextDirection::RightToLeft)
         return Err(TextError::Unsupported);
+    if (!request.inline_objects.matches(request.text)) return Err(TextError::InvalidValue);
     return Ok(empty{});
 }
 auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLayout, TextError> {
@@ -149,6 +152,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                            rstd::move(queries).into_raw().template cast<TextQueries>())},
         {}};
     if (request.boundaries) result.data.boundaries = *request.boundaries;
+    result.data.inline_objects = request.inline_objects;
     result.data.revision = collection.counters.revision;
     result.fonts.push(fonts.primary.clone());
     Scalar tab_width{};
@@ -165,10 +169,19 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     bool want_dots = request.max_lines && request.overflow == TextOverflow::ThreeDots;
     if (want_dots)
         chars.push(Character{.code = '.', .synthetic = true});
+    auto objects = request.inline_objects.objects(); usize next_object{};
     for (auto &character : chars) {
         auto cp = character.code;
         if (!character.newline && ++glyph_count > collection.limits.glyphs)
             return Err(TextError::Limit);
+        if (!character.synthetic && next_object < objects.len() && character.begin == objects[next_object].range.start) {
+            auto scaled = objects[next_object].scaled(request.size);
+            if (scaled.is_err()) return Err(scaled.unwrap_err());
+            auto object = rstd::move(scaled).unwrap();
+            character.object = static_cast<Index>((next_object++).to_primitive());
+            character.advance = object.advance; character.ascent = object.ascent; character.descent = object.descent; character.ink = object.ink;
+            continue;
+        }
         if (!character.newline && !character.tab) {
             auto resolved = fonts.resolve(collection, cp);
             if (resolved.is_err())
@@ -278,6 +291,11 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         Scalar ascent = first->ascent, descent = first->descent, height = first->height;
         for (auto &c : visible) {
             width += advance(c, width);
+            if (c.object != ~Index{}) {
+                if (c.ascent > ascent) ascent = c.ascent;
+                if (c.descent > descent) descent = c.descent;
+                continue;
+            }
             auto &font = result.fonts[usize(c.font)];
             if (font->ascent > ascent)
                 ascent = font->ascent;
@@ -310,7 +328,13 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         auto line_index = static_cast<Index>(result.data.lines.len().to_primitive());
         for (auto &c : visible) {
             auto delta = advance(c, position);
-            result.data.glyphs.push(TextGlyph{c.font,
+            auto ink = c.ink;
+            ink.x += x + position;
+            ink.y += line.baseline;
+            if (c.object != ~Index{}) {
+                result.data.inline_boxes.push(TextInlineBox{c.object, line_index, {x + position, y, delta, height}, ink});
+            } else {
+                result.data.glyphs.push(TextGlyph{c.font,
                                               c.glyph,
                                               c.begin,
                                               c.end,
@@ -320,18 +344,18 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                                               !c.tab && c.code != ' ',
                                               c.missing,
                                               c.synthetic});
+            }
             if (c.missing)
                 ++result.data.missing_glyphs;
-            auto ink = c.ink;
-            ink.x += x + position;
-            ink.y += line.baseline;
             unite(line.ink, ink);
             position += delta;
             query->stops.push(Stop{c.end, x + position});
+            if (c.object != ~Index{}) continue;
             auto glyph_end = static_cast<Index>(result.data.glyphs.len().to_primitive());
             if (!result.data.runs.is_empty() &&
                 result.data.runs[result.data.runs.len() - usize(1)].line == line_index &&
-                result.data.runs[result.data.runs.len() - usize(1)].font == c.font) {
+                result.data.runs[result.data.runs.len() - usize(1)].font == c.font &&
+                result.data.runs[result.data.runs.len() - usize(1)].byte_end == c.begin) {
                 auto &run = result.data.runs[result.data.runs.len() - usize(1)];
                 run.byte_end = c.end;
                 run.glyph_end = glyph_end;
@@ -381,6 +405,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     }
     if (request.width.is_none() && request.alignment != TextAlignment::Natural) {
         result.data.ink = {};
+        usize box_index{};
         for (usize li{}; li < result.data.lines.len(); ++li) {
             auto &line = result.data.lines[li];
             auto extra = result.data.logical.width - line.logical.width;
@@ -393,6 +418,10 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
             line.ink.x += shift;
             for (Index i = line.glyph_start; i < line.glyph_end; ++i)
                 result.data.glyphs[usize(i)].position.x += shift;
+            while (box_index < result.data.inline_boxes.len() && result.data.inline_boxes[box_index].line == li.to_primitive()) {
+                auto &box = result.data.inline_boxes[box_index++];
+                box.logical.x += shift; box.ink.x += shift;
+            }
             auto &ql = query->lines[li];
             ql.bounds = line.logical;
             for (Index i = ql.start; i < ql.end; ++i)

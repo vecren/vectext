@@ -222,6 +222,80 @@ TEST(Vectext, RangeBoxesWrapAndHidden) {
     EXPECT_TRUE(service.layout({.text = ""_str}).unwrap().range_boxes({0, 0}).unwrap().is_empty());
 }
 TEST(Vectext, LinesAndCodepoints) { lines_and_codepoints(); }
+TEST(Vectext, InlineObjectPreparation) {
+    auto text = String::make("aé\uFFFC\uFFFC"_str);
+    TextInlineObject entries[]{{{3, 6}, 12, 10, 2, {1, -14, 10, 12}}, {{6, 9}, .5, .7, .2, {0, -.7, .5, .9}, TextInlineUnit::Em}};
+    auto values = slice<TextInlineObject>::from_raw_parts(entries, usize(2));
+    auto prepared = TextInlineObjects::create(text.as_str(), values).unwrap();
+    auto clone = prepared; EXPECT_EQ(clone.objects().as_raw_ptr(), prepared.objects().as_raw_ptr());
+    text = String::make("changed"_str); entries[0].advance = 30;
+    EXPECT_TRUE(prepared.matches("aé\uFFFC\uFFFC"_str)); EXPECT_EQ(prepared.objects()[usize()].advance, 12.0);
+    EXPECT_TRUE(prepared.overlaps({4, 6})); EXPECT_FALSE(prepared.overlaps({0, 3})); EXPECT_FALSE(prepared.overlaps({3, 3}));
+    auto em = prepared.objects()[usize(1)].scaled(20).unwrap();
+    EXPECT_EQ(em.advance, 10.0); EXPECT_EQ(em.ascent, 14.0); EXPECT_EQ(em.descent, 4.0); EXPECT_EQ(em.ink, (Rect{0, -14, 10, 18}));
+    entries[0].range = {2, 5}; EXPECT_TRUE(TextInlineObjects::create("aé\uFFFC\uFFFC"_str, values).is_err());
+    entries[0].range = {3, 6}; entries[1].range = {3, 6}; EXPECT_TRUE(TextInlineObjects::create("aé\uFFFC\uFFFC"_str, values).is_err());
+    entries[1].range = {6, 10}; EXPECT_TRUE(TextInlineObjects::create("aé\uFFFC\uFFFC"_str, values).is_err());
+    entries[1].range = {6, 9}; entries[0].ascent = -1; EXPECT_TRUE(TextInlineObjects::create("aé\uFFFC\uFFFC"_str, values).is_err());
+    entries[0].ascent = 1; entries[0].advance = __builtin_inf(); EXPECT_TRUE(TextInlineObjects::create("aé\uFFFC\uFFFC"_str, values).is_err());
+    entries[0].advance = 1; entries[0].ink.width = -1; EXPECT_TRUE(TextInlineObjects::create("aé\uFFFC\uFFFC"_str, values).is_err());
+    entries[0].ink.width = 1; entries[0].unit = TextInlineUnit(99); EXPECT_TRUE(TextInlineObjects::create("aé\uFFFC\uFFFC"_str, values).is_err());
+    EXPECT_TRUE(TextInlineObjects::create("anything"_str, {}).unwrap().matches("else"_str));
+}
+TEST(Vectext, InlineObjectLayoutAndQueries) {
+    auto service = fixed_service(); TextInlineObject object{{1, 4}, 30, 25, 10, {-2, -31, 32, 35}};
+    auto prepared = TextInlineObjects::create("A\uFFFCB"_str, slice<TextInlineObject>::from_raw_parts(&object, usize(1))).unwrap();
+    auto layout = service.layout({.text = "A\uFFFCB"_str, .inline_objects = prepared}).unwrap();
+    EXPECT_EQ(layout.inline_objects().objects().as_raw_ptr(), prepared.objects().as_raw_ptr());
+    ASSERT_EQ(layout.inline_boxes().len(), usize(1)); EXPECT_EQ(layout.glyphs().len(), usize(2)); EXPECT_EQ(layout.runs().len(), usize(2));
+    EXPECT_EQ(layout.missing_glyphs(), 0u);
+    auto box = layout.inline_boxes()[usize()]; auto left = layout.caret(1).unwrap().bounds.x;
+    EXPECT_EQ(box.logical, (Rect{left, 0, 30, 35})); EXPECT_EQ(box.ink, (Rect{left - 2, -6, 32, 35}));
+    EXPECT_EQ(layout.baseline(), 25.0); EXPECT_EQ(layout.logical_bounds().height, 35.0); EXPECT_EQ(layout.ink_bounds().y, -6.0);
+    EXPECT_TRUE(near(layout.caret(4).unwrap().bounds.x - left, 30));
+    EXPECT_EQ(layout.hit({left + 1, 10}).unwrap().byte_index, 1u); EXPECT_EQ(layout.hit({left + 29, 10}).unwrap().byte_index, 4u);
+    EXPECT_EQ(layout.caret(2).unwrap_err(), TextError::InvalidIndex);
+    EXPECT_EQ(layout.range_boxes({1, 4}).unwrap()[usize()].bounds, box.logical);
+    EXPECT_EQ(layout.range_boxes({0, 5}).unwrap().len(), usize(1));
+    auto only = object; only.range = {0, 3};
+    auto single = TextInlineObjects::create("\uFFFC"_str, slice<TextInlineObject>::from_raw_parts(&only, usize(1))).unwrap();
+    auto image = service.layout({.text = "\uFFFC"_str, .inline_objects = single}).unwrap();
+    EXPECT_TRUE(image.glyphs().is_empty()); EXPECT_TRUE(image.runs().is_empty()); EXPECT_EQ(image.missing_glyphs(), 0u);
+    EXPECT_EQ(image.caret(3).unwrap().bounds.x, 30.0);
+    EXPECT_TRUE(service.layout({.text = "different"_str, .inline_objects = prepared}).is_err());
+}
+TEST(Vectext, InlineObjectWrapAlignmentAndHidden) {
+    auto service = fixed_service(); TextInlineObject object{{1, 4}, 30, 25, 10, {-2, -31, 32, 35}};
+    auto prepared = TextInlineObjects::create("A\uFFFCB"_str, slice<TextInlineObject>::from_raw_parts(&object, usize(1))).unwrap();
+    TextRequest request{.text = "A\uFFFCB"_str, .width = Some(31.0), .alignment = TextAlignment::Right, .inline_objects = prepared};
+    auto layout = service.layout(request).unwrap();
+    ASSERT_EQ(layout.lines().len(), usize(3)); ASSERT_EQ(layout.inline_boxes().len(), usize(1));
+    auto box = layout.inline_boxes()[usize()]; EXPECT_EQ(box.line, 1u); EXPECT_EQ(box.logical.x, 1.0);
+    EXPECT_EQ(box.logical.y, layout.lines()[usize(1)].logical.y);
+    EXPECT_EQ(layout.caret(1).unwrap().bounds.x, 1.0);
+    request.max_lines = 1; request.overflow = TextOverflow::ThreeDots;
+    auto hidden = service.layout(request).unwrap(); EXPECT_TRUE(hidden.inline_boxes().is_empty());
+    EXPECT_TRUE(hidden.range_boxes({1, 4}).unwrap().is_empty()); EXPECT_TRUE(hidden.hidden_range()->start <= 1);
+    request.width = None(); request.max_lines = 0; request.alignment = TextAlignment::Center; request.text = "A\n\uFFFC"_str;
+    object.range = {2, 5}; request.inline_objects = TextInlineObjects::create(request.text, slice<TextInlineObject>::from_raw_parts(&object, usize(1))).unwrap();
+    auto centered = service.layout(request).unwrap(); EXPECT_EQ(centered.inline_boxes()[usize()].logical.x, 0.0);
+    EXPECT_TRUE(centered.lines()[usize()].logical.x > 0);
+}
+TEST(Vectext, InlineObjectEmAndNormalizedBytes) {
+    auto service = fixed_service(); TextInlineObject object{{3, 6}, .5, .8, .2, {0, -1, .5, 1.2}, TextInlineUnit::Em};
+    auto prepared = TextInlineObjects::create("中\uFFFC"_str, slice<TextInlineObject>::from_raw_parts(&object, usize(1))).unwrap();
+    TextRequest request{.text = "中\uFFFC"_str, .size = 20, .inline_objects = prepared};
+    auto first = service.layout(request).unwrap(); request.size = 40; auto second = service.layout(request).unwrap();
+    EXPECT_EQ(first.inline_boxes()[usize()].logical.width, 10.0); EXPECT_EQ(second.inline_boxes()[usize()].logical.width, 20.0);
+    EXPECT_EQ(second.inline_boxes()[usize()].ink.height, first.inline_boxes()[usize()].ink.height * 2);
+    EXPECT_EQ(second.inline_objects().objects().as_raw_ptr(), prepared.objects().as_raw_ptr());
+    object.range = {3, 6}; auto normalized = TextInlineObjects::create("\uFFFD\uFFFC"_str, slice<TextInlineObject>::from_raw_parts(&object, usize(1))).unwrap();
+    Vec<u8> bytes; bytes.push(u8(0xff)); bytes.push(u8(0xef)); bytes.push(u8(0xbf)); bytes.push(u8(0xbc));
+    auto layout = service.layout({.bytes = Some(bytes.as_slice()), .invalid_text = InvalidText::Replace, .inline_objects = normalized}).unwrap();
+    EXPECT_EQ(layout.text(), "\uFFFD\uFFFC"_str); EXPECT_EQ(layout.inline_boxes()[usize()].object, 0u);
+    object.advance = 1048576; request.inline_objects = TextInlineObjects::create(request.text, slice<TextInlineObject>::from_raw_parts(&object, usize(1))).unwrap();
+    EXPECT_EQ(service.layout(request).unwrap_err(), TextError::Limit);
+}
 TEST(Vectext, Fallback) { fallback(); }
 TEST(Vectext, FontLifetimeAndEviction) { font_lifetime_and_eviction(); }
 TEST(Vectext, ConcurrentReaders) { concurrent_readers(); }
