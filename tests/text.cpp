@@ -199,6 +199,29 @@ TEST(Vectext, RangeBoxes) {
     EXPECT_EQ(layout.range_boxes({0, 20}).unwrap_err(), TextError::InvalidIndex);
     EXPECT_EQ(layout.range_boxes({9, 9}).unwrap().len(), usize());
 }
+TEST(Vectext, OverflowParagraphAlignment) {
+    auto service=fixed_service();auto text="1,000~100K"_str;
+    auto natural=service.layout({.text=text,.wrap=TextWrap::None}).unwrap();auto width=natural.lines()[usize()].logical.width;
+    TextRequest request{.text=text,.width=Some(width/2),.wrap=TextWrap::None,.alignment=TextAlignment::Right};
+    auto right=service.layout(request).unwrap();ASSERT_EQ(right.lines().len(),usize(1));auto shift=-width/2;
+    EXPECT_TRUE(near(right.lines()[usize()].logical.x,shift));EXPECT_TRUE(near(right.logical_bounds().x,shift));EXPECT_TRUE(near(right.logical_bounds().width,width));
+    EXPECT_TRUE(near(right.glyphs()[usize()].position.x-natural.glyphs()[usize()].position.x,shift));
+    EXPECT_TRUE(near(right.caret(0).unwrap().bounds.x,shift));EXPECT_TRUE(near(right.caret(Index(text->len().to_primitive())).unwrap().bounds.x,width/2));
+    auto boxes=right.range_boxes({0,Index(text->len().to_primitive())}).unwrap();ASSERT_EQ(boxes.len(),usize(1));EXPECT_TRUE(near(boxes[usize()].bounds.x,shift));EXPECT_TRUE(near(boxes[usize()].bounds.width,width));
+    EXPECT_EQ(right.hit({shift+.1,right.lines()[usize()].baseline/2}).unwrap().byte_index,0u);
+    request.alignment=TextAlignment::Center;auto center=service.layout(request).unwrap();EXPECT_TRUE(near(center.lines()[usize()].logical.x,-width/4));
+    request.alignment=TextAlignment::End;EXPECT_TRUE(near(service.layout(request)->lines()[usize()].logical.x,shift));
+    request.width=Some(width*2);auto fits=service.layout(request).unwrap();EXPECT_TRUE(near(fits.lines()[usize()].logical.x,width));EXPECT_EQ(fits.logical_bounds().x,0);
+    request.width=None();auto unconstrained=service.layout(request).unwrap();EXPECT_EQ(unconstrained.lines()[usize()].logical.x,0);EXPECT_TRUE(near(unconstrained.logical_bounds().width,width));
+}
+TEST(Vectext, InlineOverflowAlignment) {
+    auto service=fixed_service();auto text="A\uFFFCB"_str;TextInlineObject object{{1,4},30,25,10,{-2,-31,32,35}};
+    auto objects=TextInlineObjects::create(text,slice<TextInlineObject>::from_raw_parts(&object,usize(1))).unwrap();
+    TextRequest request{.text=text,.wrap=TextWrap::None,.inline_objects=objects};auto natural=service.layout(request).unwrap();auto width=natural.logical_bounds().width;
+    request.width=Some(width/2);request.alignment=TextAlignment::Right;auto aligned=service.layout(request).unwrap();auto box=aligned.inline_boxes()[usize()];
+    EXPECT_TRUE(near(box.logical.x-natural.inline_boxes()[usize()].logical.x,-width/2));EXPECT_TRUE(near(box.ink.x-natural.inline_boxes()[usize()].ink.x,-width/2));
+    EXPECT_TRUE(near(aligned.caret(1).unwrap().bounds.x,box.logical.x));auto ranges=aligned.range_boxes({1,4}).unwrap();ASSERT_EQ(ranges.len(),usize(1));EXPECT_EQ(ranges[usize()].bounds.x,box.logical.x);EXPECT_EQ(ranges[usize()].bounds.width,30);
+}
 TEST(Vectext, RangeBoxesWrapAndHidden) {
     auto service = fixed_service();
     TextRequest request{.text = "abc def ghi"_str, .width = Some(32.0)};

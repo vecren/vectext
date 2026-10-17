@@ -322,7 +322,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
             height = ascent + descent;
         Scalar x{};
         if (request.width.is_some()) {
-            auto extra = *request.width > width ? *request.width - width : 0;
+            auto extra = *request.width - width;
             if (request.alignment == TextAlignment::Right ||
                 request.alignment == TextAlignment::End)
                 x = extra;
@@ -414,8 +414,9 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     }
     if (request.width.is_some() && request.alignment != TextAlignment::Natural) {
         auto right = result.data.logical.x + result.data.logical.width;
-        result.data.logical.x = 0;
-        result.data.logical.width = right > *request.width ? right : *request.width;
+        auto left = result.data.logical.x < 0 ? result.data.logical.x : Scalar(0);
+        result.data.logical.x = left;
+        result.data.logical.width = (right > *request.width ? right : *request.width) - left;
     }
     if (request.width.is_none() && request.alignment != TextAlignment::Natural) {
         result.data.ink = {};
