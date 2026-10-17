@@ -80,3 +80,12 @@ TEST(VectextBoundaries, Unicode17GraphemeBreakConformance) {
     line(); EXPECT_GT(cases, 700u);
     rstd::io::println("Unicode 17 grapheme cases={}", cases);
 }
+
+TEST(VectextBoundaries, DefaultWordsClassifyCjkAndSkipEmojiWithoutDictionaries) {
+    auto text = TextBoundaries::create("中国 カタカナ 👩‍🚀 12"_str).unwrap();
+    EXPECT_EQ(text.word_at(0).unwrap(), (TextWord{{0, 3}, true}));
+    EXPECT_EQ(text.word_at(3).unwrap(), (TextWord{{3, 6}, true}));
+    EXPECT_EQ(text.word_at(7).unwrap(), (TextWord{{7, 19}, true}));
+    EXPECT_EQ(text.word_at(20).unwrap(), (TextWord{{20, 31}, false}));
+    EXPECT_EQ(text.word_at(32).unwrap(), (TextWord{{32, 34}, true}));
+}
