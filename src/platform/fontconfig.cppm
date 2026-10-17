@@ -60,6 +60,10 @@ auto parse_source(Config &, Vec<u8> bytes, Index index, ref<str> path)
     return Ok(SourceData{rstd::move(bytes), index, rstd::move(name), rstd::move(pattern)});
 }
 auto source_bytes(const SourceData &source) -> Serial { return source.bytes.len().to_primitive(); }
+auto source_bold(const SourceData &source) -> bool {
+    int weight{};
+    return fc::FcPatternGetInteger(source.pattern.get(),fc::FC_WEIGHT,0,&weight)==fc::FcResultMatch && weight>=fc::FC_WEIGHT_BOLD;
+}
 auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits)
     -> Result<empty, TextError> {
     return face.initialize(source.bytes.as_slice(), source.index, size, limits);

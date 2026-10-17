@@ -23,7 +23,7 @@ struct FontResolver {
         for (auto &candidate : choices) {
             if (!candidate_supports(candidate, cp))
                 continue;
-            auto loaded = candidate_font(collection, candidate, request.size);
+            auto loaded = candidate_font(collection, candidate, request.size,request.bold);
             if (loaded.is_err())
                 return Err(loaded.unwrap_err());
             auto font = rstd::move(loaded).unwrap();
@@ -36,7 +36,7 @@ struct FontResolver {
         if (fallback.is_err())
             return Err(fallback.unwrap_err());
         if (fallback->is_some()) {
-            auto loaded = candidate_font(collection, **fallback, request.size);
+            auto loaded = candidate_font(collection, **fallback, request.size,request.bold);
             if (loaded.is_err())
                 return Err(loaded.unwrap_err());
             auto font = rstd::move(loaded).unwrap();
@@ -54,7 +54,7 @@ auto resolver(Collection &collection, TextRequest request) -> Result<FontResolve
     if (matched.is_err())
         return Err(matched.unwrap_err());
     auto choices = rstd::move(matched).unwrap();
-    auto primary = candidate_font(collection, choices[usize()], request.size);
+    auto primary = candidate_font(collection, choices[usize()], request.size,request.bold);
     if (primary.is_err())
         return Err(primary.unwrap_err());
     return Ok(FontResolver{rstd::move(choices), rstd::move(primary).unwrap(), request});

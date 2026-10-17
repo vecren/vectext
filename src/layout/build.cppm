@@ -75,7 +75,7 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
     }
     if (request.direction == TextDirection::RightToLeft)
         return Err(TextError::Unsupported);
-    if (!request.inline_objects.matches(request.text)) return Err(TextError::InvalidValue);
+    if (!request.inline_objects.matches(request.text) || !request.font_spans.matches(request.text)) return Err(TextError::InvalidValue);
     return Ok(empty{});
 }
 auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLayout, TextError> {
@@ -153,8 +153,21 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         {}};
     if (request.boundaries) result.data.boundaries = *request.boundaries;
     result.data.inline_objects = request.inline_objects;
+    result.data.font_spans = request.font_spans;
     result.data.revision = collection.counters.revision;
     result.fonts.push(fonts.primary.clone());
+    Option<FontResolver> variants[4];
+    auto resolver_at=[&](const Character &character) -> Result<FontResolver *,TextError> {
+        auto style=character.synthetic ? TextFontStyle{request.bold,request.italic} : request.font_spans.style(character.begin,{request.bold,request.italic});
+        if (style == TextFontStyle{request.bold,request.italic}) return Ok(&fonts);
+        auto slot=unsigned(style.bold)*2+unsigned(style.italic);
+        if (variants[slot].is_none()) {
+            auto variant=request; variant.bold=style.bold; variant.italic=style.italic;
+            auto matched=resolver(collection,variant); if (matched.is_err()) return Err(matched.unwrap_err());
+            variants[slot]=Some(rstd::move(matched).unwrap());
+        }
+        return Ok(&*variants[slot]);
+    };
     Scalar tab_width{};
     {
         auto &font = result.fonts[usize()];
@@ -183,7 +196,8 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
             continue;
         }
         if (!character.newline && !character.tab) {
-            auto resolved = fonts.resolve(collection, cp);
+            auto selected=resolver_at(character); if (selected.is_err()) return Err(selected.unwrap_err());
+            auto resolved = selected.unwrap()->resolve(collection, cp);
             if (resolved.is_err())
                 return Err(resolved.unwrap_err());
             auto &font = resolved->font;

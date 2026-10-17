@@ -19,6 +19,66 @@ enum class TextOverflow { Clip, ThreeDots };
 enum class TextTabs { Stops, Ignore };
 enum class TextWhitespace { Preserve, TrimWrap };
 enum class InvalidText { Reject, Replace };
+struct TextFontStyle {
+    bool bold{}, italic{};
+    auto operator==(const TextFontStyle &) const -> bool = default;
+};
+struct TextFontSpan {
+    TextRange range;
+    Option<bool> bold, italic;
+    auto operator==(const TextFontSpan &) const -> bool = default;
+};
+class TextFontSpans {
+    struct Data {
+        String text;
+        Vec<TextFontSpan> spans;
+        Data(ref<str> text, Vec<TextFontSpan> spans) : text(String::make(text)), spans(rstd::move(spans)) {}
+    };
+    Option<rstd::sync::Arc<Data>> data_;
+    TextFontSpans(ref<str> text, Vec<TextFontSpan> spans)
+        : data_(Some(rstd::sync::Arc<Data>::make(text,rstd::move(spans)))) {}
+  public:
+    TextFontSpans() = default;
+    TextFontSpans(const TextFontSpans &other) : data_(other.data_.is_some() ? Some(other.data_->clone()) : None<rstd::sync::Arc<Data>>()) {}
+    auto operator=(const TextFontSpans &other) -> TextFontSpans & {
+        if (this != &other) data_ = other.data_.is_some() ? Some(other.data_->clone()) : None<rstd::sync::Arc<Data>>();
+        return *this;
+    }
+    TextFontSpans(TextFontSpans &&) = default;
+    auto operator=(TextFontSpans &&) -> TextFontSpans & = default;
+    static auto create(ref<str> text, slice<TextFontSpan> spans) -> Result<TextFontSpans,TextError> {
+        if (text->len() > usize(~Index{})) return Err(TextError::InvalidValue);
+        Vec<TextFontSpan> checked; Index end{};
+        for (auto span : spans) {
+            if (span.range.start < end || span.range.start >= span.range.end || usize(span.range.end) > text->len() ||
+                !text->is_char_boundary(usize(span.range.start)) || !text->is_char_boundary(usize(span.range.end)) ||
+                (span.bold.is_none() && span.italic.is_none())) return Err(TextError::InvalidValue);
+            end = span.range.end;
+            if (!checked.is_empty() && checked[checked.len()-usize(1)].range.end == span.range.start &&
+                checked[checked.len()-usize(1)].bold == span.bold && checked[checked.len()-usize(1)].italic == span.italic)
+                checked[checked.len()-usize(1)].range.end = span.range.end;
+            else checked.push(rstd::move(span));
+        }
+        if (checked.is_empty()) return Ok(TextFontSpans{});
+        return Ok(TextFontSpans(text,rstd::move(checked)));
+    }
+    auto spans() const -> slice<TextFontSpan> { return data_.is_some() ? (*data_)->spans.as_slice() : slice<TextFontSpan>{}; }
+    auto matches(ref<str> text) const -> bool { return data_.is_none() || (*data_)->text.as_str() == text; }
+    auto style(Index byte, TextFontStyle inherited = {}) const -> TextFontStyle {
+        auto values = spans(); usize first{},last=values.len();
+        while (first < last) {
+            auto middle=first+(last-first)/usize(2); const auto &span=values[middle];
+            if (byte < span.range.start) last=middle;
+            else if (byte >= span.range.end) first=middle+usize(1);
+            else return {span.bold.is_some() ? *span.bold : inherited.bold,span.italic.is_some() ? *span.italic : inherited.italic};
+        }
+        return inherited;
+    }
+    auto operator==(const TextFontSpans &other) const -> bool {
+        if (data_.is_none() || other.data_.is_none()) return data_.is_none() && other.data_.is_none();
+        return rstd::sync::Arc<Data>::ptr_eq(*data_,*other.data_) || ((*data_)->text == (*other.data_)->text && spans() == other.spans());
+    }
+};
 enum class TextInlineUnit { Logical, Em };
 struct TextInlineObject {
     TextRange range;
@@ -109,6 +169,7 @@ struct TextRequest {
     InvalidText invalid_text{InvalidText::Reject};
     const TextBoundaries *boundaries{};
     TextInlineObjects inline_objects;
+    TextFontSpans font_spans;
 };
 struct TextFormat {
     ref<str> family{"sans"_str}, language{"und"_str};
@@ -234,6 +295,7 @@ struct TextLayoutData {
     TextBoundaries boundaries;
     TextInlineObjects inline_objects;
     Vec<TextInlineBox> inline_boxes;
+    TextFontSpans font_spans;
 };
 class TextLayout {
     struct Data {
@@ -267,7 +329,7 @@ class TextLayout {
             data.lines.is_empty())
             return Err(TextError::InvalidValue);
         auto text = data.text.as_str();
-        if (!data.inline_objects.matches(text)) return Err(TextError::InvalidValue);
+        if (!data.inline_objects.matches(text) || !data.font_spans.matches(text)) return Err(TextError::InvalidValue);
         if (data.hidden.is_some() &&
             (data.hidden->start > data.hidden->end || data.hidden->end != bytes ||
              !text->is_char_boundary(usize(data.hidden->start))))
@@ -363,6 +425,7 @@ class TextLayout {
     auto lines() const -> slice<TextLine> { return data_->value.lines.as_slice(); }
     auto boundaries() const -> const TextBoundaries & { return data_->value.boundaries; }
     auto inline_objects() const -> const TextInlineObjects & { return data_->value.inline_objects; }
+    auto font_spans() const -> const TextFontSpans & { return data_->value.font_spans; }
     auto inline_boxes() const -> slice<TextInlineBox> { return data_->value.inline_boxes.as_slice(); }
     // Logical advances cover whole intersecting clusters, excluding synthetic glyphs.
     auto range_boxes(TextRange range) const -> Result<Vec<TextRangeBox>, TextError> {

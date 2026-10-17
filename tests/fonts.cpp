@@ -7,6 +7,89 @@ using namespace vectext::tests;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace vectext;
+TEST(VectextFonts, FontSpanOwnershipAndValidation) {
+    auto text=String::make("A中文B"_str);
+    TextFontSpan input[]{{{1,4},Some(true),{}},{{4,7},Some(true),{}}};
+    auto spans=TextFontSpans::create(text.as_str(),slice<TextFontSpan>::from_raw_parts(input,usize(2))).unwrap();
+    text=String(); input[0].bold=Some(false);
+    EXPECT_TRUE(spans.matches("A中文B"_str)); EXPECT_EQ(spans.spans().len(),usize(1));
+    EXPECT_EQ(spans.spans()[usize()].range.end,7u);
+    EXPECT_TRUE((spans.style(1,{false,true})==TextFontStyle{true,true}));
+    EXPECT_TRUE((spans.style(7,{false,true})==TextFontStyle{false,true}));
+    auto copy=spans; EXPECT_TRUE(copy==spans);
+    TextFontSpan bad[]{{{2,4},Some(true),{}},{{1,9},Some(true),{}},{{1,1},Some(true),{}},{{1,4},{},{}}};
+    for (auto span:bad) EXPECT_EQ(TextFontSpans::create("A中文B"_str,slice<TextFontSpan>::from_raw_parts(&span,usize(1))).unwrap_err(),TextError::InvalidValue);
+    TextFontSpan overlap[]{{{1,7},Some(true),{}},{{4,7},Some(false),{}}};
+    EXPECT_EQ(TextFontSpans::create("A中文B"_str,slice<TextFontSpan>::from_raw_parts(overlap,usize(2))).unwrap_err(),TextError::InvalidValue);
+    TextFontSpan regular{{0,1},Some(false),{}};
+    auto normal=TextFontSpans::create("A"_str,slice<TextFontSpan>::from_raw_parts(&regular,usize(1))).unwrap();
+    EXPECT_FALSE(normal.style(0,{true,false}).bold);
+}
+TEST(VectextFonts, FontSpansSelectNativeFacesAndRestore) {
+    auto service=fixed_service(); TextRequest request{.text="ABCABCABC"_str,.family="DejaVu Sans"_str,.size=24};
+    auto normal=service.layout(request).unwrap(); request.bold=true;
+    auto bold=service.layout(request).unwrap(); request.bold=false;
+    TextFontSpan span{{3,6},Some(true),{}}; request.font_spans=TextFontSpans::create(request.text,slice<TextFontSpan>::from_raw_parts(&span,usize(1))).unwrap();
+    auto mixed=service.layout(request).unwrap(); EXPECT_TRUE(mixed.font_spans()==request.font_spans);
+    for (usize i{};i<usize(9);++i) {
+        auto &glyph=mixed.glyphs()[i]; auto &expected=(i>=usize(3)&&i<usize(6)?bold:normal).glyphs()[i];
+        EXPECT_EQ(mixed.fonts()[usize(glyph.font)].id(),(i>=usize(3)&&i<usize(6)?bold:normal).fonts()[usize(expected.font)].id());
+        EXPECT_EQ(glyph.advance,expected.advance);
+        EXPECT_TRUE(mixed.caret(glyph.byte_start).is_ok());
+    }
+    EXPECT_EQ(mixed.runs().len(),usize(3));
+    EXPECT_TRUE(normal.fonts()[usize()].id()!=bold.fonts()[usize()].id());
+    EXPECT_EQ(mixed.caret(6).unwrap().bounds.x,mixed.glyphs()[usize(6)].position.x);
+    request.text="mismatch"_str; EXPECT_EQ(service.layout(request).unwrap_err(),TextError::InvalidValue);
+}
+TEST(VectextFonts, FontSpansFixedSourceSynthesisAndCache) {
+    auto collection=FontCollection::create({.system_fonts=false}).unwrap(); auto bytes=font_data("DejaVuSans.ttf"_str);
+    auto source=collection.register_font(bytes.as_slice()).unwrap(); SystemTextService service(collection);
+    TextRequest request{.text="WWW"_str,.size=24,.source=Some(source)};
+    auto normal=service.layout(request).unwrap(); request.bold=true; auto bold=service.layout(request).unwrap();
+    auto &a=normal.fonts()[usize()], &b=bold.fonts()[usize()];
+    EXPECT_TRUE(a.id()!=b.id()); EXPECT_EQ(a.name(),b.name());
+    EXPECT_TRUE(bold.glyphs()[usize()].advance>normal.glyphs()[usize()].advance);
+    Scalar scales[]{1,2};
+    for (auto scale:scales) {
+        auto plain=a.rasterize(normal.glyphs()[usize()].glyph,scale).unwrap(), strong=b.rasterize(bold.glyphs()[usize()].glyph,scale).unwrap();
+        EXPECT_TRUE(strong.width>plain.width && strong.height>plain.height); unsigned long total{},original{};
+        for (auto value:strong.coverage) total+=value; for (auto value:plain.coverage) original+=value;
+        EXPECT_TRUE(total>original); EXPECT_EQ(plain.origin,strong.origin);
+    }
+    collection.clear_cache(); auto again=service.layout(request).unwrap(); EXPECT_EQ(again.fonts()[usize()].id(),b.id());
+    EXPECT_TRUE(a.rasterize(normal.glyphs()[usize()].glyph,1).is_ok());
+    request.bold=false; TextFontSpan span{{1,2},Some(true),{}};
+    request.font_spans=TextFontSpans::create(request.text,slice<TextFontSpan>::from_raw_parts(&span,usize(1))).unwrap();
+    auto mixed=service.layout(request).unwrap();
+    EXPECT_EQ(mixed.fonts()[usize(mixed.glyphs()[usize(1)].font)].id(),b.id());
+    EXPECT_EQ(mixed.fonts()[usize(mixed.glyphs()[usize(2)].font)].id(),a.id());
+    auto bold_bytes=font_data("DejaVuSans-Bold.ttf"_str); request.source=Some(collection.register_font(bold_bytes.as_slice()).unwrap());
+    request.font_spans={}; auto native=service.layout(request).unwrap(); request.bold=true; auto native_again=service.layout(request).unwrap();
+    EXPECT_EQ(native.fonts()[usize()].id(),native_again.fonts()[usize()].id());
+}
+TEST(VectextFonts, FontSpansReflowInlineObjectsAndNormalizedBytes) {
+    auto service=fixed_service(); TextRequest request{.text="iiiiiiii"_str,.family="DejaVu Sans"_str,.size=24};
+    auto normal=service.layout(request).unwrap(); request.width=Some(normal.logical_bounds().width+.01);
+    TextFontSpan span{{2,6},Some(true),{}};
+    request.font_spans=TextFontSpans::create(request.text,slice<TextFontSpan>::from_raw_parts(&span,usize(1))).unwrap();
+    auto wrapped=service.layout(request).unwrap(); EXPECT_TRUE(wrapped.lines().len()>usize(1));
+    for (Index i{};i<=8;++i) EXPECT_TRUE(wrapped.caret(i).is_ok());
+    request.max_lines=1;request.overflow=TextOverflow::ThreeDots;
+    auto clipped=service.layout(request).unwrap(); EXPECT_TRUE(clipped.hidden_range().is_some());
+    EXPECT_TRUE(clipped.font_spans()==request.font_spans);
+    request={.text="W\uFFFC中W"_str,.family="DejaVu Sans"_str,.size=24}; span.range={0,8};
+    request.font_spans=TextFontSpans::create(request.text,slice<TextFontSpan>::from_raw_parts(&span,usize(1))).unwrap();
+    TextInlineObject object{{1,4},1,1,0,{0,-1,1,1},TextInlineUnit::Em};
+    request.inline_objects=TextInlineObjects::create(request.text,slice<TextInlineObject>::from_raw_parts(&object,usize(1))).unwrap();
+    auto inline_layout=service.layout(request).unwrap(); EXPECT_EQ(inline_layout.inline_boxes().len(),usize(1));
+    EXPECT_EQ(inline_layout.inline_boxes()[usize()].logical.width,24.); EXPECT_EQ(inline_layout.glyphs().len(),usize(3));
+    EXPECT_EQ(inline_layout.missing_glyphs(),0u);
+    request={.text=""_str,.family="DejaVu Sans"_str};
+    Vec<u8> bytes;bytes.push(u8('A'));bytes.push(u8(0xff));bytes.push(u8('B')); request.bytes=Some(bytes.as_slice());request.invalid_text=InvalidText::Replace;
+    span.range={1,4}; request.font_spans=TextFontSpans::create("A\uFFFDB"_str,slice<TextFontSpan>::from_raw_parts(&span,usize(1))).unwrap();
+    auto normalized=service.layout(request).unwrap(); EXPECT_EQ(normalized.text(),"A\uFFFDB"_str); EXPECT_TRUE(normalized.font_spans()==request.font_spans);
+}
 TEST(VectextFonts, MemoryIdentityAndRefresh) {
     auto collection = fixed_collection();
     auto before = collection.revision();

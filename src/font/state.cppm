@@ -4,6 +4,7 @@ import :layout;
 import :types;
 import :platform;
 import :platform.common;
+import :font.synthesis;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
@@ -22,11 +23,12 @@ struct Font {
     Arc<Source> source;
     platform::Face native;
     Scalar size{}, ascent{}, descent{}, height{};
+    bool embolden{};
     Serial id{new_identity()}, revision{};
     TextLimits limits;
     rstd::sync::Mutex<empty> mutex;
-    Font(Arc<Source> source, Scalar size, Serial revision, TextLimits limits)
-        : source(rstd::move(source)), size(size), revision(revision), limits(limits) {}
+    Font(Arc<Source> source, Scalar size, Serial revision, TextLimits limits, bool embolden)
+        : source(rstd::move(source)), size(size), embolden(embolden), revision(revision), limits(limits) {}
     auto initialize() -> Result<empty, TextError> {
         auto result = platform::initialize(native, source->data, size, limits);
         if (result.is_err())
@@ -45,11 +47,19 @@ struct Font {
     }
     auto measure(Index glyph) -> Result<GlyphMetrics, TextError> {
         auto guard = mutex.lock().unwrap();
-        return native.measure(glyph);
+        auto value=native.measure(glyph);
+        if (value.is_ok() && embolden) {
+            auto strength=size/24;
+            if (value->advance>0) value->advance+=strength;
+            if (value->ink.width>0 && value->ink.height>0) {value->ink.width+=strength; value->ink.height+=strength;}
+        }
+        return value;
     }
     auto rasterize(Index glyph, Scalar scale) -> Result<GlyphBitmap, TextError> {
         auto guard = mutex.lock().unwrap();
-        return native.rasterize(glyph, scale);
+        auto value=native.rasterize(glyph,scale);
+        if (value.is_err() || !embolden) return value;
+        return embolden_bitmap(rstd::move(value).unwrap(),size/24,limits);
     }
 };
 struct Collection {
@@ -92,7 +102,7 @@ struct Collection {
     auto make_config() -> Result<platform::Config, TextError> {
         return platform::make_config(system, config_path.as_str());
     }
-    auto font(Arc<Source> source, Scalar size) -> Result<Arc<Font>, TextError> {
+    auto font(Arc<Source> source, Scalar size, bool embolden=false) -> Result<Arc<Font>, TextError> {
         Serial alive{};
         for (usize i{}; i < instances.len();) {
             auto instance = instances[i].upgrade();
@@ -101,7 +111,7 @@ struct Collection {
                 continue;
             }
             ++alive;
-            if (instance->revision == counters.revision && instance->size == size &&
+            if (instance->revision == counters.revision && instance->size == size && instance->embolden == embolden &&
                 Arc<Source>::ptr_eq(instance->source, source)) {
                 ++counters.font_hits;
                 return Ok(rstd::move(instance));
@@ -117,7 +127,7 @@ struct Collection {
             if (alive >= limits.font_instances)
                 return Err(TextError::Limit);
         }
-        auto result = Arc<Font>::make(rstd::move(source), size, counters.revision, limits);
+        auto result = Arc<Font>::make(rstd::move(source), size, counters.revision, limits,embolden);
         auto status = result->initialize();
         if (status.is_err())
             return Err(status.unwrap_err());

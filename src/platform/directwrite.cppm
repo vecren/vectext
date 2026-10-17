@@ -38,6 +38,7 @@ struct SourceData {
     String name, family;
     bool bold{}, italic{};
 };
+auto source_bold(const SourceData &source) -> bool { return source.bold || (source.pattern->GetSimulations() & dw::DWRITE_FONT_SIMULATIONS_BOLD); }
 auto source_bytes(const SourceData &source) -> Serial {
     return source.memory ? source.memory->bytes.len().to_primitive() : 0;
 }

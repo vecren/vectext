@@ -3,6 +3,7 @@ module;
 module vectext;
 import :font.raster;
 import :layout.build;
+import :font.synthesis;
 #if !__is_target_os(macos) && !__is_target_os(windows)
 import vectext.ffi.freetype;
 import :platform.freetype;
@@ -10,6 +11,34 @@ import :platform.freetype;
 import rstd.test;
 using namespace vectext;
 using namespace rstd::prelude;
+TEST(VectextInternal, SyntheticBoldCoverageAndLimits) {
+    GlyphBitmap input{2,1,{},1,{}}; input.coverage.push(100);input.coverage.push(200);
+    auto output=embolden_bitmap(rstd::move(input),.5,{}).unwrap();
+    EXPECT_EQ(output.width,3u); EXPECT_EQ(output.height,2u);
+    unsigned char expected[]{100,200,100,50,100,50};
+    for (usize i{};i<usize(6);++i) EXPECT_EQ(output.coverage[i],expected[i.to_primitive()]);
+    GlyphBitmap limited{2,1,{},1,{}}; limited.coverage.push(100);limited.coverage.push(200); TextLimits limits;limits.bitmap_bytes=5;
+    EXPECT_EQ(embolden_bitmap(rstd::move(limited),.5,limits).unwrap_err(),TextError::Limit);
+}
+TEST(VectextInternal, SyntheticBoldMatchesCoverageEnvelope) {
+    Scalar amounts[]{.25,1,1.75,4};
+    for (auto amount:amounts) {
+        GlyphBitmap input{3,4,{},1,{}};
+        for (unsigned i{};i<12;++i) input.coverage.push(static_cast<unsigned char>((i*71+31)%256));
+        auto original=Vec<unsigned char>::from(input.coverage.as_slice());auto output=embolden_bitmap(rstd::move(input),amount,{}).unwrap();
+        for (Index y{};y<output.height;++y) for (Index x{};x<output.width;++x) {
+            unsigned expected{};
+            for (Index py{};py<4;++py) for (Index px{};px<3;++px) {
+                if (x<px || y<py || x-px>__builtin_ceil(amount) || y-py>__builtin_ceil(amount)) continue;
+                auto coverage=unsigned(original[usize(py*3+px)]);
+                if (x-px>__builtin_floor(amount)) coverage=static_cast<unsigned>(coverage*(amount-__builtin_floor(amount))+.5);
+                if (y-py>__builtin_floor(amount)) coverage=static_cast<unsigned>(coverage*(amount-__builtin_floor(amount))+.5);
+                if (coverage>expected)expected=coverage;
+            }
+            EXPECT_EQ(output.coverage[usize(y*output.width+x)],expected);
+        }
+    }
+}
 #if !__is_target_os(macos) && !__is_target_os(windows)
 namespace ft = vectext::ffi::freetype;
 using vectext::freetype::bitmap_coverage;

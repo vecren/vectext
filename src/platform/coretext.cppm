@@ -270,6 +270,7 @@ struct Face {
     }
 };
 auto source_bytes(const SourceData &source) -> Serial { return source.bytes.len().to_primitive(); }
+auto source_bold(const SourceData &source) -> bool { return source.traits & ct::kCTFontBoldTrait; }
 auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits)
     -> Result<empty, TextError> {
     face.font.reset(ct::CTFontCreateWithFontDescriptor(source.pattern.get(), size, nullptr));

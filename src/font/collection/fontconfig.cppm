@@ -86,7 +86,7 @@ auto candidates(Collection &c, TextRequest request) -> Result<Vec<Candidate>, Te
     }
     return Ok(rstd::move(output));
 }
-auto candidate_font(Collection &c, Candidate &candidate, Scalar size)
+auto candidate_font(Collection &c, Candidate &candidate, Scalar size, bool bold=false)
     -> Result<Arc<Font>, TextError> {
     if (candidate.font.is_some())
         return Ok(candidate.font->clone());
@@ -134,7 +134,7 @@ auto candidate_font(Collection &c, Candidate &candidate, Scalar size)
             source = Some(rstd::move(loaded).unwrap());
         }
     }
-    auto loaded = c.font(source->clone(), size);
+    auto loaded = c.font(source->clone(), size,bold && !platform::source_bold((*source)->data));
     if (loaded.is_err())
         return Err(loaded.unwrap_err());
     candidate.font = Some(rstd::move(loaded).unwrap());
