@@ -1,6 +1,10 @@
 [package]
 name = "vectext-tests"
 
+[profile.base]
+exceptions = false
+rtti = false
+
 [dependencies]
 vectext = { path = ".." }
 rstd-test = { version = "0.1.5" }

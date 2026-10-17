@@ -180,6 +180,47 @@ void concurrent_readers() {
     ASSERT_TRUE((a.ok && b.ok));
 }
 TEST(Vectext, BasicAndLifetime) { basic_and_lifetime(); }
+TEST(Vectext, RangeBoxes) {
+    auto service = fixed_service();
+    auto layout = service.layout({.text = "a中 b\ncd"_str, .width = Some(120.0), .alignment = TextAlignment::Right}).unwrap();
+    auto boxes = layout.range_boxes({1, 8}).unwrap();
+    ASSERT_EQ(boxes.len(), usize(2));
+    auto left = layout.caret(1).unwrap().bounds.x;
+    auto right = layout.caret(6).unwrap().bounds.x;
+    EXPECT_EQ(boxes[usize()].line, 0u);
+    EXPECT_EQ(boxes[usize()].bounds, (Rect{left, 0, right - left, layout.lines()[usize()].logical.height}));
+    EXPECT_EQ(boxes[usize()].baseline, layout.lines()[usize()].baseline);
+    EXPECT_EQ(boxes[usize(1)].bounds.x, layout.caret(8).unwrap().bounds.x - layout.glyphs()[usize(4)].advance);
+    EXPECT_EQ(boxes[usize(1)].bounds.width, layout.glyphs()[usize(4)].advance);
+    EXPECT_TRUE(layout.range_boxes({6, 6}).unwrap().is_empty());
+    EXPECT_TRUE(layout.range_boxes({6, 7}).unwrap().is_empty());
+    EXPECT_EQ(layout.range_boxes({2, 4}).unwrap_err(), TextError::InvalidIndex);
+    EXPECT_EQ(layout.range_boxes({4, 3}).unwrap_err(), TextError::InvalidIndex);
+    EXPECT_EQ(layout.range_boxes({0, 20}).unwrap_err(), TextError::InvalidIndex);
+    EXPECT_EQ(layout.range_boxes({9, 9}).unwrap().len(), usize());
+}
+TEST(Vectext, RangeBoxesWrapAndHidden) {
+    auto service = fixed_service();
+    TextRequest request{.text = "abc def ghi"_str, .width = Some(32.0)};
+    auto layout = service.layout(request).unwrap();
+    auto boxes = layout.range_boxes({0, 11}).unwrap();
+    ASSERT_EQ(boxes.len(), layout.lines().len());
+    for (usize i{}; i < boxes.len(); ++i) {
+        EXPECT_EQ(boxes[i].line, i.to_primitive());
+        EXPECT_TRUE(near(boxes[i].bounds.width, layout.lines()[i].logical.width));
+        EXPECT_EQ(boxes[i].bounds.y, layout.lines()[i].logical.y);
+    }
+    request.max_lines = 1; request.overflow = TextOverflow::ThreeDots;
+    auto clipped = service.layout(request).unwrap();
+    ASSERT_TRUE(clipped.hidden_range().is_some());
+    auto cut = clipped.hidden_range()->start;
+    EXPECT_TRUE(clipped.range_boxes({cut, 11}).unwrap().is_empty());
+    auto visible = clipped.range_boxes({0, 11}).unwrap();
+    ASSERT_EQ(visible.len(), usize(1));
+    EXPECT_TRUE(near(visible[usize()].bounds.width, clipped.caret(cut, TextAffinity::Upstream).unwrap().bounds.x));
+    EXPECT_TRUE(visible[usize()].bounds.width < clipped.logical_bounds().width);
+    EXPECT_TRUE(service.layout({.text = ""_str}).unwrap().range_boxes({0, 0}).unwrap().is_empty());
+}
 TEST(Vectext, LinesAndCodepoints) { lines_and_codepoints(); }
 TEST(Vectext, Fallback) { fallback(); }
 TEST(Vectext, FontLifetimeAndEviction) { font_lifetime_and_eviction(); }

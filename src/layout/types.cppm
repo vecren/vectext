@@ -129,6 +129,12 @@ struct TextHit {
 struct TextCaret {
     Rect bounds;
 };
+struct TextRangeBox {
+    Index line{};
+    Rect bounds;
+    Scalar baseline{};
+    auto operator==(const TextRangeBox &) const -> bool = default;
+};
 struct TextQueries {
     virtual ~TextQueries() = default;
     virtual auto hit(Point point) const -> Result<TextHit, TextError> = 0;
@@ -260,6 +266,46 @@ class TextLayout {
     auto revision() const -> Serial { return data_->value.revision; }
     auto lines() const -> slice<TextLine> { return data_->value.lines.as_slice(); }
     auto boundaries() const -> const TextBoundaries & { return data_->value.boundaries; }
+    // Logical advances cover whole intersecting clusters, excluding synthetic glyphs.
+    auto range_boxes(TextRange range) const -> Result<Vec<TextRangeBox>, TextError> {
+        if (range.start > range.end || usize(range.end) > text()->len() ||
+            !text()->is_char_boundary(usize(range.start)) || !text()->is_char_boundary(usize(range.end)))
+            return Err(TextError::InvalidIndex);
+        Vec<TextRangeBox> result;
+        if (range.start == range.end) return Ok(rstd::move(result));
+        if (data_->value.hidden.is_some() && range.end > data_->value.hidden->start)
+            range.end = data_->value.hidden->start;
+        for (usize line_index{}; line_index < lines().len(); ++line_index) {
+            const auto &line = lines()[line_index];
+            if (range.start >= line.byte_end || range.end <= line.byte_start) continue;
+            Vec<Rect> intervals;
+            for (Index i = line.glyph_start; i < line.glyph_end; ++i) {
+                const auto &glyph = glyphs()[usize(i)];
+                if (glyph.synthetic || glyph.byte_start >= range.end || glyph.byte_end <= range.start) continue;
+                auto end = glyph.position.x + glyph.advance;
+                auto left = rstd::cmp::min(glyph.position.x, end), right = rstd::cmp::max(glyph.position.x, end);
+                Rect bounds{left, line.logical.y, right - left, line.logical.height};
+                if (!bounds.valid()) return Err(TextError::Layout);
+                if (bounds.width > 0 && bounds.height > 0) intervals.push(rstd::move(bounds));
+            }
+            rstd::slice_::sort_unstable_by(intervals.as_mut_slice().as_mut_ref(),
+                [](const Rect &left, const Rect &right) { return left.x < right.x; });
+            for (auto bounds : intervals) {
+                if (!result.is_empty()) {
+                    auto &previous = result[result.len() - usize(1)];
+                    auto right = previous.bounds.x + previous.bounds.width;
+                    auto tolerance = __DBL_EPSILON__ * 8 * rstd::cmp::max(1.0, rstd::cmp::max(__builtin_fabs(right), __builtin_fabs(bounds.x)));
+                    if (previous.line == line_index.to_primitive() && bounds.x <= right + tolerance) {
+                        previous.bounds.width = rstd::cmp::max(previous.bounds.x + previous.bounds.width, bounds.x + bounds.width) - previous.bounds.x;
+                        if (!previous.bounds.valid()) return Err(TextError::Layout);
+                        continue;
+                    }
+                }
+                result.push(TextRangeBox{static_cast<Index>(line_index.to_primitive()), bounds, line.baseline});
+            }
+        }
+        return Ok(rstd::move(result));
+    }
     auto hit(Point point) const -> Result<TextHit, TextError> {
         if (!finite(point.x) || !finite(point.y))
             return Err(TextError::InvalidValue);
