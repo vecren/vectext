@@ -250,6 +250,7 @@ struct TextLine {
     Index byte_start{}, byte_end{}, glyph_start{}, glyph_end{};
     Rect logical, ink;
     Scalar baseline{};
+    Scalar ascent{}, descent{};
 };
 struct TextRun {
     Index font{}, byte_start{}, byte_end{}, glyph_start{}, glyph_end{}, line{};
@@ -355,6 +356,9 @@ class TextLayout {
         Index next_glyph{}, line_index{};
         for (const auto &line : data.lines) {
             if (!line.logical.valid() || !line.ink.valid() || !finite(line.baseline) ||
+                !finite(line.ascent) || !finite(line.descent) || line.ascent < 0 ||
+                line.descent < 0 || !finite(line.baseline - line.ascent) ||
+                !finite(line.baseline + line.descent) ||
                 line.byte_start > line.byte_end || line.byte_end > bytes ||
                 !text->is_char_boundary(usize(line.byte_start)) ||
                 !text->is_char_boundary(usize(line.byte_end)) || line.glyph_start != next_glyph ||
@@ -414,6 +418,17 @@ class TextLayout {
     auto id() const -> Serial { return data_->id; }
     auto text() const -> ref<str> { return data_->value.text.as_str(); }
     auto logical_bounds() const -> Rect { return data_->value.logical; }
+    // Font extents retain interline spacing, without leading after the last line.
+    auto typographic_bounds() const -> Rect {
+        auto bounds = logical_bounds();
+        Scalar top = lines()[usize()].baseline - lines()[usize()].ascent;
+        Scalar bottom = top;
+        for (const auto &line : lines()) {
+            top = rstd::cmp::min(top, line.baseline - line.ascent);
+            bottom = rstd::cmp::max(bottom, line.baseline + line.descent);
+        }
+        return {bounds.x, top, bounds.width, bottom - top};
+    }
     auto ink_bounds() const -> Rect { return data_->value.ink; }
     auto baseline() const -> Scalar { return data_->value.baseline; }
     auto missing_glyphs() const -> Index { return data_->value.missing_glyphs; }

@@ -335,7 +335,9 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                                                        : byte_start,
                       .glyph_start = static_cast<Index>(result.data.glyphs.len().to_primitive()),
                       .logical = {x, y, width, height},
-                      .baseline = y + ascent};
+                      .baseline = y + ascent,
+                      .ascent = ascent,
+                      .descent = descent};
         auto stop_start = static_cast<Index>(query->stops.len().to_primitive());
         query->stops.push(Stop{byte_start, x});
         Scalar position{};

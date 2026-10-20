@@ -180,6 +180,41 @@ void concurrent_readers() {
     ASSERT_TRUE((a.ok && b.ok));
 }
 TEST(Vectext, BasicAndLifetime) { basic_and_lifetime(); }
+TEST(Vectext, TypographicBoundsExcludeTrailingLeading) {
+    auto collection = FontCollection::create({.system_fonts = false}).unwrap();
+    auto bytes = font_data("LineGap.ttf"_str);
+    auto source = collection.register_font(bytes.as_slice()).unwrap();
+    SystemTextService service(rstd::move(collection));
+    TextRequest request{.text = "A"_str,
+                        .size = 100,
+                        .width = Some(300.0),
+                        .alignment = TextAlignment::Right,
+                        .source = Some(source)};
+    auto single = service.layout(request).unwrap();
+    const auto &line = single.lines()[usize()];
+    EXPECT_TRUE(near(line.ascent, 80));
+    EXPECT_TRUE(near(line.descent, 20));
+    EXPECT_TRUE(near(line.logical.height, 200));
+    EXPECT_TRUE(near(single.logical_bounds().height, 200));
+    EXPECT_TRUE(near(single.typographic_bounds().height, 100));
+    EXPECT_EQ(single.typographic_bounds().width, single.logical_bounds().width);
+    EXPECT_EQ(single.typographic_bounds().x, single.logical_bounds().x);
+    EXPECT_TRUE(near(single.glyphs()[usize()].position.y, 80));
+    request.text = "g"_str;
+    auto descender = service.layout(request).unwrap();
+    EXPECT_EQ(descender.typographic_bounds(), single.typographic_bounds());
+    EXPECT_TRUE(descender.ink_bounds().height > single.ink_bounds().height);
+    request.text = "A\n\ng"_str;
+    request.line_spacing = 25;
+    auto multiline = service.layout(request).unwrap();
+    ASSERT_EQ(multiline.lines().len(), usize(3));
+    EXPECT_TRUE(near(multiline.typographic_bounds().height, 550));
+    EXPECT_TRUE(near(multiline.logical_bounds().height, 650));
+    EXPECT_TRUE(near(multiline.lines()[usize(2)].baseline - multiline.baseline(), 450));
+    request.text = ""_str;
+    auto empty = service.layout(request).unwrap();
+    EXPECT_TRUE(near(empty.typographic_bounds().height, 100));
+}
 TEST(Vectext, RangeBoxes) {
     auto service = fixed_service();
     auto layout = service.layout({.text = "a中 b\ncd"_str, .width = Some(120.0), .alignment = TextAlignment::Right}).unwrap();
