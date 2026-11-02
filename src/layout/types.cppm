@@ -170,6 +170,7 @@ struct TextRequest {
     const TextBoundaries *boundaries{};
     TextInlineObjects inline_objects;
     TextFontSpans font_spans;
+    Scalar character_spacing{};
 };
 struct TextFormat {
     ref<str> family{"sans"_str}, language{"und"_str};
@@ -179,8 +180,9 @@ struct TextFormat {
     bool bold{}, italic{};
     TextAlignment alignment{TextAlignment::Natural};
     Scalar line_spacing{};
+    Scalar character_spacing{};
     auto valid() const -> bool {
-        return finite(size) && size > 0 && finite(line_spacing) && line_spacing >= 0 &&
+        return finite(size) && size > 0 && finite(line_spacing) && line_spacing >= 0 && finite(character_spacing) &&
                (alignment >= TextAlignment::Natural && alignment <= TextAlignment::Center) &&
                (direction == TextDirection::Auto || direction == TextDirection::LeftToRight ||
                 direction == TextDirection::RightToLeft) &&
@@ -297,6 +299,7 @@ struct TextLayoutData {
     TextInlineObjects inline_objects;
     Vec<TextInlineBox> inline_boxes;
     TextFontSpans font_spans;
+    Scalar character_spacing{};
 };
 class TextLayout {
     struct Data {
@@ -326,7 +329,7 @@ class TextLayout {
             data.boundaries = rstd::move(boundaries).unwrap();
         }
         auto bytes = data.text.as_str()->len().to_primitive();
-        if (!data.logical.valid() || !data.ink.valid() || !finite(data.baseline) ||
+        if (!data.logical.valid() || !data.ink.valid() || !finite(data.baseline) || !finite(data.character_spacing) ||
             data.lines.is_empty())
             return Err(TextError::InvalidValue);
         auto text = data.text.as_str();
@@ -441,6 +444,7 @@ class TextLayout {
     auto boundaries() const -> const TextBoundaries & { return data_->value.boundaries; }
     auto inline_objects() const -> const TextInlineObjects & { return data_->value.inline_objects; }
     auto font_spans() const -> const TextFontSpans & { return data_->value.font_spans; }
+    auto character_spacing() const -> Scalar { return data_->value.character_spacing; }
     auto inline_boxes() const -> slice<TextInlineBox> { return data_->value.inline_boxes.as_slice(); }
     // Logical advances cover whole intersecting clusters, excluding synthetic glyphs.
     auto range_boxes(TextRange range) const -> Result<Vec<TextRangeBox>, TextError> {

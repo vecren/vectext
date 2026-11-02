@@ -50,6 +50,7 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
     TextFormat format{request.family,    request.language,  request.size,
                       request.direction, request.wrap,      request.bold,
                       request.italic,    request.alignment, request.line_spacing};
+    format.character_spacing = request.character_spacing;
     if (request.overflow < TextOverflow::Clip || request.overflow > TextOverflow::ThreeDots ||
         request.tabs < TextTabs::Stops || request.tabs > TextTabs::Ignore ||
         request.whitespace < TextWhitespace::Preserve ||
@@ -59,7 +60,7 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
     if (request.size < 1.0 / 64 || !format.valid() ||
         (request.width.is_some() && (!finite(*request.width) || *request.width < 0)))
         return Err(TextError::InvalidValue);
-    if (request.size > 16384 || request.line_spacing > 1048576 ||
+    if (request.size > 16384 || request.line_spacing > 1048576 || __builtin_fabs(request.character_spacing) > 1048576 ||
         (request.width.is_some() && *request.width > 1048576))
         return Err(TextError::Limit);
     auto text_valid = validate_text(request.text->as_bytes());
@@ -154,6 +155,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     if (request.boundaries) result.data.boundaries = *request.boundaries;
     result.data.inline_objects = request.inline_objects;
     result.data.font_spans = request.font_spans;
+    result.data.character_spacing = request.character_spacing;
     result.data.revision = collection.counters.revision;
     result.fonts.push(fonts.primary.clone());
     Option<FontResolver> variants[4];
@@ -225,10 +227,11 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         dot = chars[chars.len() - usize(1)];
         chars.pop();
     }
-    auto advance = [tab_width, request](const Character &c, Scalar x) {
-        return c.tab && request.tabs == TextTabs::Ignore ? 0.0
-               : c.tab ? (__builtin_floor(x / tab_width) + 1) * tab_width - x
-                       : c.advance;
+    auto advance = [tab_width, request](const Character &c, Scalar x, bool followed = true) {
+        auto value = c.tab && request.tabs == TextTabs::Ignore ? 0.0
+                     : c.tab ? (__builtin_floor(x / tab_width) + 1) * tab_width - x
+                             : c.advance;
+        return followed && !c.tab && request.character_spacing != 0 ? value + request.character_spacing : value;
     };
     usize start{};
     Index byte_start{};
@@ -238,7 +241,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         usize end = start, last_break = start;
         Scalar width{};
         while (end < chars.len() && !chars[end].newline) {
-            auto next = width + advance(chars[end], width);
+            auto next = width + advance(chars[end], width, false);
             if (request.width.is_some() && request.wrap != TextWrap::None &&
                 next > *request.width && end > start) {
                 if (last_break > start) {
@@ -248,12 +251,12 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                 if (request.wrap == TextWrap::WordOrCharacter)
                     break;
             }
-            width = next;
+            width += advance(chars[end], width);
             ++end;
             if (chars[end - usize(1)].code == ' ' || chars[end - usize(1)].code == '-') {
                 last_break = end;
                 if (request.width.is_some() && request.wrap != TextWrap::None &&
-                    width > *request.width)
+                    next > *request.width)
                     break;
             }
         }
@@ -283,7 +286,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                     used += advance(c, used);
                     widths.push(Scalar(used));
                 }
-                while (!visible.is_empty() && used + 3 * dot.advance > *request.width) {
+                while (!visible.is_empty() && used + 3 * dot.advance + (3 - 1) * request.character_spacing > *request.width) {
                     visible.pop();
                     used = widths[visible.len()];
                 }
@@ -303,8 +306,12 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         width = 0;
         auto &first = result.fonts[usize()];
         Scalar ascent = first->ascent, descent = first->descent, height = first->height;
-        for (auto &c : visible) {
-            width += advance(c, width);
+        for (usize i{}; i < visible.len(); ++i) {
+            auto &c = visible[i];
+            auto delta = advance(c, width, i + usize(1) < visible.len());
+            if (!finite(delta)) return Err(TextError::Limit);
+            if (delta < 0) return Err(TextError::Unsupported);
+            width += delta;
             if (c.object != ~Index{}) {
                 if (c.ascent > ascent) ascent = c.ascent;
                 if (c.descent > descent) descent = c.descent;
@@ -342,8 +349,9 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         query->stops.push(Stop{byte_start, x});
         Scalar position{};
         auto line_index = static_cast<Index>(result.data.lines.len().to_primitive());
-        for (auto &c : visible) {
-            auto delta = advance(c, position);
+        for (usize i{}; i < visible.len(); ++i) {
+            auto &c = visible[i];
+            auto delta = advance(c, position, i + usize(1) < visible.len());
             auto ink = c.ink;
             ink.x += x + position;
             ink.y += line.baseline;
