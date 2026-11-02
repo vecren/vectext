@@ -11,6 +11,40 @@ enum class TextDirection { Auto, LeftToRight, RightToLeft };
 enum class TextWrap { None, Word, WordOrCharacter };
 enum class TextAlignment { Natural, Start, End, Left, Right, Center };
 enum class TextAffinity { Downstream, Upstream };
+enum class TextSpacingUnit { Logical, Em, PercentEm };
+enum class TextSpacingArithmetic { Double, Float32 };
+struct TextSpacing {
+    TextSpacingUnit unit{TextSpacingUnit::Logical};
+    Scalar scale{1};
+    TextSpacingArithmetic arithmetic{TextSpacingArithmetic::Double};
+    auto valid() const -> bool {
+        return unit >= TextSpacingUnit::Logical && unit <= TextSpacingUnit::PercentEm &&
+            finite(scale) && scale >= 0 &&
+            (arithmetic == TextSpacingArithmetic::Double || arithmetic == TextSpacingArithmetic::Float32);
+    }
+    auto resolve(Scalar size, Scalar value) const -> Result<Scalar, TextError> {
+        if (!valid() || !finite(size) || size < 0 || !finite(value)) return Err(TextError::InvalidValue);
+        Scalar result;
+        if (arithmetic == TextSpacingArithmetic::Float32) {
+            if (size > __FLT_MAX__ || scale > __FLT_MAX__ || __builtin_fabs(value) > __FLT_MAX__) return Err(TextError::Limit);
+            float basis = unit == TextSpacingUnit::Logical ? 1.0f : float(size);
+            if (unit == TextSpacingUnit::PercentEm) basis = basis * .01f;
+            basis = basis * float(scale);
+            float resolved = float(value) * basis;
+            result = resolved;
+        } else if (unit == TextSpacingUnit::Logical && scale == 1) result = value;
+        else {
+            auto basis = unit == TextSpacingUnit::Logical ? Scalar(1) : size;
+            if (unit == TextSpacingUnit::PercentEm) basis *= .01;
+            basis *= scale;
+            result = value * basis;
+        }
+        if (!finite(result)) return Err(TextError::Limit);
+        return Ok(result);
+    }
+    auto operator==(const TextSpacing &) const -> bool = default;
+};
+
 struct FontSource {
     Serial collection{}, source{};
     friend auto operator==(const FontSource &, const FontSource &) -> bool = default;
@@ -91,7 +125,7 @@ struct TextInlineObject {
             (unit == TextInlineUnit::Logical || unit == TextInlineUnit::Em);
     }
     auto scaled(Scalar em) const -> Result<TextInlineObject, TextError> {
-        if (!valid() || !finite(em) || em <= 0) return Err(TextError::InvalidValue);
+        if (!valid() || !finite(em) || em < 0) return Err(TextError::InvalidValue);
         auto factor = unit == TextInlineUnit::Em ? em : 1;
         TextInlineObject result{range, advance * factor, ascent * factor, descent * factor,
             {ink.x * factor, ink.y * factor, ink.width * factor, ink.height * factor}};
@@ -171,6 +205,7 @@ struct TextRequest {
     TextInlineObjects inline_objects;
     TextFontSpans font_spans;
     Scalar character_spacing{};
+    TextSpacing spacing;
 };
 struct TextFormat {
     ref<str> family{"sans"_str}, language{"und"_str};
@@ -181,8 +216,9 @@ struct TextFormat {
     TextAlignment alignment{TextAlignment::Natural};
     Scalar line_spacing{};
     Scalar character_spacing{};
+    TextSpacing spacing;
     auto valid() const -> bool {
-        return finite(size) && size > 0 && finite(line_spacing) && line_spacing >= 0 && finite(character_spacing) &&
+        return finite(size) && size >= 0 && finite(line_spacing) && line_spacing >= 0 && finite(character_spacing) && spacing.valid() &&
                (alignment >= TextAlignment::Natural && alignment <= TextAlignment::Center) &&
                (direction == TextDirection::Auto || direction == TextDirection::LeftToRight ||
                 direction == TextDirection::RightToLeft) &&
@@ -300,6 +336,8 @@ struct TextLayoutData {
     Vec<TextInlineBox> inline_boxes;
     TextFontSpans font_spans;
     Scalar character_spacing{};
+    TextSpacing spacing;
+    Option<Scalar> resolved_spacing;
 };
 class TextLayout {
     struct Data {
@@ -329,7 +367,9 @@ class TextLayout {
             data.boundaries = rstd::move(boundaries).unwrap();
         }
         auto bytes = data.text.as_str()->len().to_primitive();
-        if (!data.logical.valid() || !data.ink.valid() || !finite(data.baseline) || !finite(data.character_spacing) ||
+        if (!data.logical.valid() || !data.ink.valid() || !finite(data.baseline) || !finite(data.character_spacing) || !data.spacing.valid() ||
+            (data.resolved_spacing.is_some() && !finite(*data.resolved_spacing)) ||
+            (data.spacing != TextSpacing{} && data.resolved_spacing.is_none()) ||
             data.lines.is_empty())
             return Err(TextError::InvalidValue);
         auto text = data.text.as_str();
@@ -445,6 +485,8 @@ class TextLayout {
     auto inline_objects() const -> const TextInlineObjects & { return data_->value.inline_objects; }
     auto font_spans() const -> const TextFontSpans & { return data_->value.font_spans; }
     auto character_spacing() const -> Scalar { return data_->value.character_spacing; }
+    auto spacing() const -> const TextSpacing & { return data_->value.spacing; }
+    auto resolved_character_spacing() const -> Scalar { return data_->value.resolved_spacing.unwrap_or(data_->value.character_spacing); }
     auto inline_boxes() const -> slice<TextInlineBox> { return data_->value.inline_boxes.as_slice(); }
     // Logical advances cover whole intersecting clusters, excluding synthetic glyphs.
     auto range_boxes(TextRange range) const -> Result<Vec<TextRangeBox>, TextError> {

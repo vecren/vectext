@@ -51,13 +51,14 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
                       request.direction, request.wrap,      request.bold,
                       request.italic,    request.alignment, request.line_spacing};
     format.character_spacing = request.character_spacing;
+    format.spacing = request.spacing;
     if (request.overflow < TextOverflow::Clip || request.overflow > TextOverflow::ThreeDots ||
         request.tabs < TextTabs::Stops || request.tabs > TextTabs::Ignore ||
         request.whitespace < TextWhitespace::Preserve ||
         request.whitespace > TextWhitespace::TrimWrap ||
         request.invalid_text < InvalidText::Reject || request.invalid_text > InvalidText::Replace)
         return Err(TextError::InvalidValue);
-    if (request.size < 1.0 / 64 || !format.valid() ||
+    if ((request.size != 0 && request.size < 1.0 / 64) || !format.valid() ||
         (request.width.is_some() && (!finite(*request.width) || *request.width < 0)))
         return Err(TextError::InvalidValue);
     if (request.size > 16384 || request.line_spacing > 1048576 || __builtin_fabs(request.character_spacing) > 1048576 ||
@@ -141,6 +142,10 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         return Err(valid.unwrap_err());
     if (request.boundaries && (!request.boundaries->present() || request.boundaries->text() != request.text))
         return Err(TextError::InvalidValue);
+    auto spacing = request.spacing.resolve(request.size, request.character_spacing);
+    if (spacing.is_err()) return Err(spacing.unwrap_err());
+    auto tracking = spacing.unwrap();
+    if (__builtin_fabs(tracking) > 1048576) return Err(TextError::Limit);
     auto matched = resolver(collection, request);
     if (matched.is_err())
         return Err(matched.unwrap_err());
@@ -156,6 +161,8 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     result.data.inline_objects = request.inline_objects;
     result.data.font_spans = request.font_spans;
     result.data.character_spacing = request.character_spacing;
+    result.data.spacing = request.spacing;
+    result.data.resolved_spacing = Some(Scalar(tracking));
     result.data.revision = collection.counters.revision;
     result.fonts.push(fonts.primary.clone());
     Option<FontResolver> variants[4];
@@ -227,11 +234,11 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         dot = chars[chars.len() - usize(1)];
         chars.pop();
     }
-    auto advance = [tab_width, request](const Character &c, Scalar x, bool followed = true) {
-        auto value = c.tab && request.tabs == TextTabs::Ignore ? 0.0
+    auto advance = [tab_width, request, tracking](const Character &c, Scalar x, bool followed = true) {
+        auto value = c.tab && (request.tabs == TextTabs::Ignore || tab_width == 0) ? 0.0
                      : c.tab ? (__builtin_floor(x / tab_width) + 1) * tab_width - x
                              : c.advance;
-        return followed && !c.tab && request.character_spacing != 0 ? value + request.character_spacing : value;
+        return followed && !c.tab && tracking != 0 ? value + tracking : value;
     };
     usize start{};
     Index byte_start{};
@@ -286,7 +293,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                     used += advance(c, used);
                     widths.push(Scalar(used));
                 }
-                while (!visible.is_empty() && used + 3 * dot.advance + (3 - 1) * request.character_spacing > *request.width) {
+                while (!visible.is_empty() && used + 3 * dot.advance + (3 - 1) * tracking > *request.width) {
                     visible.pop();
                     used = widths[visible.len()];
                 }
@@ -365,7 +372,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                                               line_index,
                                               {x + position, line.baseline},
                                               delta,
-                                              !c.tab && c.code != ' ',
+                                              request.size != 0 && !c.tab && c.code != ' ',
                                               c.missing,
                                               c.synthetic});
             }

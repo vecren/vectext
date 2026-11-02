@@ -30,9 +30,11 @@ struct Font {
     Font(Arc<Source> source, Scalar size, Serial revision, TextLimits limits, bool embolden)
         : source(rstd::move(source)), size(size), embolden(embolden), revision(revision), limits(limits) {}
     auto initialize() -> Result<empty, TextError> {
-        auto result = platform::initialize(native, source->data, size, limits);
+        auto result = platform::initialize(native, source->data, size == 0 ? Scalar(1) : size, limits);
         if (result.is_err())
             return result;
+        // A zero logical font keeps a native face for glyph identity and fallback.
+        if (size == 0) return Ok(empty{});
         ascent = native.ascent;
         descent = native.descent;
         height = native.height;
@@ -46,6 +48,7 @@ struct Font {
         return native.glyph(codepoint);
     }
     auto measure(Index glyph) -> Result<GlyphMetrics, TextError> {
+        if (size == 0) return Ok(GlyphMetrics{});
         auto guard = mutex.lock().unwrap();
         auto value=native.measure(glyph);
         if (value.is_ok() && embolden) {
@@ -56,6 +59,7 @@ struct Font {
         return value;
     }
     auto rasterize(Index glyph, Scalar scale) -> Result<GlyphBitmap, TextError> {
+        if (size == 0) return Ok(GlyphBitmap{0, 0, {}, scale, {}});
         auto guard = mutex.lock().unwrap();
         auto value=native.rasterize(glyph,scale);
         if (value.is_err() || !embolden) return value;
