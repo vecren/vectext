@@ -20,6 +20,12 @@ struct FontCollectionOptions {
 struct FontStats {
     Serial revision{}, font_bytes{}, instances{}, font_loads{}, font_hits{}, layouts{};
 };
+// Metrics are expressed in em units and belong to one registered font source.
+struct FontMetrics {
+    Scalar ascent{},descent{},height{};
+    auto valid() const -> bool {return finite(ascent) && finite(descent) && finite(height) && ascent>=0 && descent>=0 && height>0 && ascent<=64 && descent<=64 && height<=64 && ascent+descent>0;}
+    auto operator==(const FontMetrics &) const -> bool=default;
+};
 class FontCollection {
     struct Impl;
     rstd::sync::Arc<Impl> impl_;
@@ -33,7 +39,7 @@ class FontCollection {
     auto operator=(const FontCollection &other) -> FontCollection &;
     auto operator=(FontCollection &&) -> FontCollection &;
     ~FontCollection();
-    auto register_font(slice<unsigned char> bytes, Index face_index = 0)
+    auto register_font(slice<unsigned char> bytes, Index face_index = 0, Option<FontMetrics> metrics = {})
         -> Result<FontSource, TextError>;
     auto add_font(slice<unsigned char> bytes, Index face_index = 0) -> Result<empty, TextError>;
     auto refresh() -> Result<empty, TextError>;

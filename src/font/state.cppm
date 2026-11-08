@@ -16,6 +16,7 @@ struct Source {
     Serial id{new_identity()}, revision{};
     String path;
     bool application{};
+    Option<FontMetrics> metrics;
     Source(platform::SourceData data, String path, bool application)
         : data(rstd::move(data)), path(rstd::move(path)), application(application) {}
 };
@@ -35,9 +36,9 @@ struct Font {
             return result;
         // A zero logical font keeps a native face for glyph identity and fallback.
         if (size == 0) return Ok(empty{});
-        ascent = native.ascent;
-        descent = native.descent;
-        height = native.height;
+        ascent = source->metrics.is_some()?source->metrics->ascent*size:native.ascent;
+        descent = source->metrics.is_some()?source->metrics->descent*size:native.descent;
+        height = source->metrics.is_some()?source->metrics->height*size:native.height;
         if (!finite(ascent) || !finite(descent) || !finite(height) || ascent < 0 || descent < 0 ||
             height <= 0)
             return Err(TextError::Font);

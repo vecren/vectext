@@ -90,6 +90,60 @@ TEST(VectextFonts, FontSpansReflowInlineObjectsAndNormalizedBytes) {
     span.range={1,4}; request.font_spans=TextFontSpans::create("A\uFFFDB"_str,slice<TextFontSpan>::from_raw_parts(&span,usize(1))).unwrap();
     auto normalized=service.layout(request).unwrap(); EXPECT_EQ(normalized.text(),"A\uFFFDB"_str); EXPECT_TRUE(normalized.font_spans()==request.font_spans);
 }
+TEST(VectextFonts, UnicodeEllipsisPreservesSourceAndClusters) {
+    auto service=fixed_service();TextRequest request{.text="éééééééééééééééééééé"_str,.family="DejaVu Sans"_str,.size=24,.width=Some(Scalar(100)),.max_lines=1,.overflow=TextOverflow::Ellipsis};
+    auto layout=service.layout(request).unwrap();ASSERT_TRUE(layout.hidden_range().is_some());auto hidden=*layout.hidden_range();
+    EXPECT_EQ(layout.text(),request.text);EXPECT_TRUE(request.text->is_char_boundary(usize(hidden.start)));EXPECT_EQ(hidden.end,request.text->len().to_primitive());EXPECT_EQ(layout.lines().len(),usize(1));EXPECT_EQ(layout.missing_glyphs(),0u);EXPECT_LE(layout.logical_bounds().width,100.);
+    auto mark=service.layout({.text="\u2026"_str,.family="DejaVu Sans"_str,.size=24}).unwrap();ASSERT_EQ(mark.glyphs().len(),usize(1));
+    auto last=layout.glyphs()[layout.glyphs().len()-usize(1)];EXPECT_EQ(last.glyph,mark.glyphs()[usize()].glyph);EXPECT_EQ(last.byte_start,hidden.start);EXPECT_EQ(last.byte_end,hidden.start);
+    request.overflow=TextOverflow::ThreeDots;auto dots=service.layout(request).unwrap();auto dot=service.layout({.text="."_str,.family="DejaVu Sans"_str,.size=24}).unwrap();
+    ASSERT_TRUE(dots.glyphs().len()>=usize(3));for(usize i=dots.glyphs().len()-usize(3);i<dots.glyphs().len();++i)EXPECT_EQ(dots.glyphs()[i].glyph,dot.glyphs()[usize()].glyph);
+    request.text="first\nsecond\nthird"_str;request.max_lines=2;request.overflow=TextOverflow::Ellipsis;auto lines=service.layout(request).unwrap();EXPECT_EQ(lines.lines().len(),usize(2));EXPECT_EQ(lines.text(),request.text);EXPECT_TRUE(lines.hidden_range().is_some());
+    EXPECT_FALSE((TextFormat{.overflow=TextOverflow(99)}).valid());
+}
+TEST(VectextFonts, AutoSizeFitsBothBoundsAndKeepsCompleteText) {
+    auto service=fixed_service();TextRequest request{.text="Costume Illustration"_str,.family="DejaVu Sans"_str,.size=22,.width=Some(Scalar(80)),.height=Some(Scalar(40)),.auto_size=Some(TextAutoSize{12,24,.25})};
+    auto layout=service.layout(request).unwrap();ASSERT_TRUE(layout.font_size().is_some());auto size=*layout.font_size();EXPECT_GE(size,12.);EXPECT_LT(size,24.);EXPECT_EQ(layout.text(),request.text);EXPECT_EQ(layout.missing_glyphs(),0u);EXPECT_FALSE(layout.hidden_range().is_some());EXPECT_LE(layout.logical_bounds().height,40.);
+    for(const auto &line:layout.lines())EXPECT_LE(line.logical.width,80.);
+    auto next=request;next.auto_size=None();next.size=size+.25;auto larger=service.layout(next).unwrap();bool overflow=larger.logical_bounds().height>40;for(const auto &line:larger.lines())overflow|=line.logical.width>80;EXPECT_TRUE(overflow);
+    request.width=Some(Scalar(500));request.height=Some(Scalar(100));auto roomy=service.layout(request).unwrap();EXPECT_EQ(roomy.font_size(),Some(Scalar(24)));
+    request.width=Some(Scalar(0));request.height=Some(Scalar(0));auto minimum=service.layout(request).unwrap();EXPECT_EQ(minimum.font_size(),Some(Scalar(12)));EXPECT_EQ(minimum.text(),request.text);EXPECT_FALSE(minimum.hidden_range().is_some());
+    request.height=Some(Scalar(-1));EXPECT_EQ(service.layout(request).unwrap_err(),TextError::InvalidValue);request.height=None();request.auto_size=Some(TextAutoSize{24,12});EXPECT_EQ(service.layout(request).unwrap_err(),TextError::InvalidValue);
+}
+TEST(VectextFonts, AutoSizeReusesNormalizedTextAndPreservesFontSpans) {
+    auto service=fixed_service();Vec<u8> bytes;bytes.push(u8(0xff));for(unsigned i{};i<20;++i)bytes.push(u8('A'));
+    auto text="\uFFFDAAAAAAAAAAAAAAAAAAAA"_str;TextRequest request{.text=""_str,.family="DejaVu Sans"_str,.size=20,.width=Some(Scalar(90)),.invalid_text=InvalidText::Replace,.height=Some(Scalar(50)),.auto_size=Some(TextAutoSize{10,24})};request.bytes=Some(bytes.as_slice());
+    TextFontSpan span{{3,13},Some(true),{}};request.font_spans=TextFontSpans::create(text,slice<TextFontSpan>::from_raw_parts(&span,usize(1))).unwrap();auto layout=service.layout(request).unwrap();EXPECT_EQ(layout.text(),text);EXPECT_EQ(layout.font_spans(),request.font_spans);EXPECT_LE(layout.logical_bounds().height,50.);
+    for(Index i{};i<=text->len().to_primitive();++i)if(text->is_char_boundary(usize(i)))EXPECT_TRUE(layout.caret(i).is_ok());
+    request.auto_size=None();request.size=layout.font_size().unwrap();auto same=service.layout(request).unwrap();EXPECT_EQ(layout.logical_bounds(),same.logical_bounds());ASSERT_EQ(layout.glyphs().len(),same.glyphs().len());
+    for(usize i{};i<layout.glyphs().len();++i){const auto &first=layout.glyphs()[i],&second=same.glyphs()[i];EXPECT_EQ(first.glyph,second.glyph);EXPECT_EQ(first.byte_start,second.byte_start);EXPECT_EQ(first.byte_end,second.byte_end);EXPECT_EQ(first.position,second.position);}
+}
+TEST(VectextFonts, LineBreaksOwnTextAndValidateIndices) {
+    auto text=String::make("é A"_str);Index positions[]{2,3};auto breaks=TextLineBreaks::create(text.as_str(),slice<Index>::from_raw_parts(positions,usize(2))).unwrap();
+    text=String();positions[0]=1;EXPECT_TRUE(breaks.present());EXPECT_TRUE(breaks.matches("é A"_str));EXPECT_FALSE(breaks.matches("é B"_str));EXPECT_EQ(breaks.positions()[usize()],2u);
+    Index equal[]{2,3};auto copy=TextLineBreaks::create("é A"_str,slice<Index>::from_raw_parts(equal,usize(2))).unwrap();EXPECT_EQ(copy,breaks);
+    auto empty=TextLineBreaks::create("Wallpaper"_str,{}).unwrap();EXPECT_TRUE(empty.present());EXPECT_TRUE(empty.positions().is_empty());EXPECT_TRUE(empty!=TextLineBreaks{});EXPECT_FALSE(empty.matches("Other"_str));
+    const Index invalid[]{0,1,5};for(auto position:invalid)EXPECT_EQ(TextLineBreaks::create("é A"_str,slice<Index>::from_raw_parts(&position,usize(1))).unwrap_err(),TextError::InvalidValue);
+    Index duplicate[]{2,2},backward[]{3,2};const slice<Index> invalid_lists[]{slice<Index>::from_raw_parts(duplicate,usize(2)),slice<Index>::from_raw_parts(backward,usize(2))};for(auto values:invalid_lists)EXPECT_TRUE(TextLineBreaks::create("é A"_str,values).is_err());
+    auto service=fixed_service();EXPECT_EQ(service.layout({.text="Other"_str,.line_breaks=breaks}).unwrap_err(),TextError::InvalidValue);
+}
+TEST(VectextFonts, PreferredBreaksShrinkWordsBeforeCharacterFallback) {
+    auto service=fixed_service();TextRequest request{.text="Wallpaper"_str,.family="DejaVu Sans"_str,.size=24,.width=Some(Scalar(80)),.height=Some(Scalar(100)),.auto_size=Some(TextAutoSize{12,24,.25})};
+    auto legacy=service.layout(request).unwrap();EXPECT_TRUE(legacy.emergency_wrap());
+    request.line_breaks=TextLineBreaks::create(request.text,{}).unwrap();auto selected=service.layout(request).unwrap();EXPECT_FALSE(selected.emergency_wrap());EXPECT_EQ(selected.line_breaks(),request.line_breaks);EXPECT_EQ(selected.text(),request.text);EXPECT_EQ(selected.lines().len(),usize(1));EXPECT_EQ(selected.glyphs().len(),usize(9));EXPECT_EQ(selected.missing_glyphs(),0u);EXPECT_LE(selected.logical_bounds().width,80.);EXPECT_LT(*selected.font_size(),*legacy.font_size());EXPECT_GT(*selected.font_size(),12.);
+    auto next=request;next.auto_size=None();next.size=*selected.font_size()+.25;auto larger=service.layout(next).unwrap();EXPECT_TRUE(larger.emergency_wrap() || larger.logical_bounds().width>80);
+    request.width=Some(Scalar(1));request.height=Some(Scalar(1000));auto fallback=service.layout(request).unwrap();EXPECT_EQ(fallback.font_size(),Some(Scalar(12)));EXPECT_TRUE(fallback.emergency_wrap());EXPECT_EQ(fallback.text(),request.text);EXPECT_EQ(fallback.glyphs().len(),usize(9));EXPECT_FALSE(fallback.hidden_range().is_some());
+}
+TEST(VectextFonts, PreferredBreaksReuseNormalizedTextAndFontSpans) {
+    auto service=fixed_service();Vec<u8> bytes;bytes.push(u8(0xff));for(unsigned i{};i<5;++i)bytes.push(u8('A'));bytes.push(u8(' '));for(unsigned i{};i<5;++i)bytes.push(u8('B'));
+    auto text="\uFFFDAAAAA BBBBB"_str;Index position=8;TextFontSpan span{{3,8},Some(true),{}};
+    TextRequest request{.text=""_str,.family="DejaVu Sans"_str,.size=24,.width=Some(Scalar(95)),.whitespace=TextWhitespace::TrimWrap,.bytes=Some(bytes.as_slice()),.invalid_text=InvalidText::Replace,.height=Some(Scalar(100)),.auto_size=Some(TextAutoSize{8,24})};
+    request.line_breaks=TextLineBreaks::create(text,slice<Index>::from_raw_parts(&position,usize(1))).unwrap();request.font_spans=TextFontSpans::create(text,slice<TextFontSpan>::from_raw_parts(&span,usize(1))).unwrap();
+    auto selected=service.layout(request).unwrap();EXPECT_EQ(selected.text(),text);EXPECT_EQ(selected.line_breaks(),request.line_breaks);EXPECT_EQ(selected.font_spans(),request.font_spans);EXPECT_FALSE(selected.emergency_wrap());EXPECT_FALSE(selected.hidden_range().is_some());EXPECT_EQ(selected.lines().len(),usize(2));EXPECT_EQ(selected.lines()[usize()].byte_end,9u);EXPECT_EQ(selected.missing_glyphs(),0u);
+    for(const auto &glyph:selected.glyphs()){EXPECT_TRUE(text->is_char_boundary(usize(glyph.byte_start)));EXPECT_TRUE(text->is_char_boundary(usize(glyph.byte_end)));}
+    request.auto_size=None();request.size=*selected.font_size();auto same=service.layout(request).unwrap();EXPECT_EQ(same.logical_bounds(),selected.logical_bounds());EXPECT_EQ(same.font_spans(),selected.font_spans());EXPECT_EQ(same.line_breaks(),selected.line_breaks());ASSERT_EQ(same.glyphs().len(),selected.glyphs().len());
+    for(usize i{};i<same.glyphs().len();++i){EXPECT_EQ(same.glyphs()[i].glyph,selected.glyphs()[i].glyph);EXPECT_EQ(same.glyphs()[i].position,selected.glyphs()[i].position);}
+}
 TEST(VectextFonts, MemoryIdentityAndRefresh) {
     auto collection = fixed_collection();
     auto before = collection.revision();
@@ -250,4 +304,19 @@ TEST(VectextFonts, ExplicitSourceSurvivesRefresh) {
     auto other = fixed_service();
     EXPECT_EQ(other.layout({.text = "A"_str, .source = Some(source)}).unwrap_err(),
               TextError::InvalidValue);
+}
+TEST(VectextFonts, RegisteredMetricsBelongToSourceAndPreserveGlyphs) {
+    auto collection=FontCollection::create({.system_fonts=false}).unwrap();auto bytes=font_data("DejaVuSans.ttf"_str);
+    auto ordinary=collection.register_font(bytes.as_slice()).unwrap();auto explicit_source=collection.register_font(bytes.as_slice(),0,Some(FontMetrics{.8,.2,1.1})).unwrap();
+    SystemTextService service(collection);TextRequest request{.text="A\nB"_str,.size=20,.source=Some(ordinary)};
+    auto native=service.layout(request).unwrap();request.source=Some(explicit_source);auto selected=service.layout(request).unwrap();
+    ASSERT_EQ(selected.lines().len(),usize(2));EXPECT_EQ(selected.lines()[usize()].baseline,16.);EXPECT_EQ(selected.lines()[usize()].logical.height,22.);EXPECT_EQ(selected.logical_bounds().height,44.);
+    for(usize i{};i<native.glyphs().len();++i){EXPECT_EQ(native.glyphs()[i].glyph,selected.glyphs()[i].glyph);EXPECT_EQ(native.glyphs()[i].advance,selected.glyphs()[i].advance);}
+    auto again=service.layout(request).unwrap();EXPECT_EQ(again.fonts()[usize()].id(),selected.fonts()[usize()].id());collection.clear_cache();collection.refresh().unwrap();
+    auto fresh=service.layout(request).unwrap();EXPECT_EQ(fresh.logical_bounds(),selected.logical_bounds());EXPECT_EQ(fresh.baseline(),selected.baseline());EXPECT_TRUE(selected.fonts()[usize()].rasterize(selected.glyphs()[usize()].glyph,1).is_ok());
+    request.size=10;auto smaller=service.layout(request).unwrap();EXPECT_EQ(smaller.logical_bounds().height,22.);EXPECT_EQ(smaller.baseline(),8.);
+    request.source=Some(ordinary);request.size=20;auto unchanged=service.layout(request).unwrap();EXPECT_EQ(unchanged.logical_bounds(),native.logical_bounds());EXPECT_EQ(unchanged.baseline(),native.baseline());
+    auto revision=collection.revision(),count=collection.stats().font_bytes;const FontMetrics invalid[]{{-1,0,1},{0,0,1},{1,0,0},{1,0,__builtin_nan("")},{65,0,65}};
+    for(auto metrics:invalid)EXPECT_EQ(collection.register_font(bytes.as_slice(),0,Some(metrics)).unwrap_err(),TextError::InvalidValue);
+    EXPECT_EQ(collection.revision(),revision);EXPECT_EQ(collection.stats().font_bytes,count);
 }

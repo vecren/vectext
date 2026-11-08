@@ -49,7 +49,7 @@ struct FontSource {
     Serial collection{}, source{};
     friend auto operator==(const FontSource &, const FontSource &) -> bool = default;
 };
-enum class TextOverflow { Clip, ThreeDots };
+enum class TextOverflow { Clip, ThreeDots, Ellipsis };
 enum class TextTabs { Stops, Ignore };
 enum class TextWhitespace { Preserve, TrimWrap };
 enum class InvalidText { Reject, Replace };
@@ -184,6 +184,40 @@ class TextInlineObjects {
             ((*data_)->text == (*other.data_)->text && objects() == other.objects());
     }
 };
+struct TextAutoSize {
+    Scalar minimum{},maximum{},increment{.05};
+    auto valid() const -> bool {return finite(minimum) && finite(maximum) && finite(increment) && minimum>=0 && (minimum==0 || minimum>=1.0/64) && maximum>=minimum && (maximum==0 || maximum>=1.0/64) && maximum<=16384 && increment>0 && (minimum!=0 || maximum==0 || increment>=1.0/64) && (maximum-minimum)/increment<=65536;}
+    auto operator==(const TextAutoSize &) const -> bool=default;
+};
+// Preferred UTF-8 break positions are sized before character wrapping is used.
+class TextLineBreaks {
+    struct Data {
+        String text;
+        Vec<Index> positions;
+        Data(ref<str> text,slice<Index> positions):text(String::make(text)),positions(Vec<Index>::from(positions)){}
+    };
+    Option<rstd::sync::Arc<Data>> data_;
+    TextLineBreaks(ref<str> text,slice<Index> positions):data_(Some(rstd::sync::Arc<Data>::make(text,positions))){}
+  public:
+    TextLineBreaks()=default;
+    TextLineBreaks(const TextLineBreaks &other):data_(other.data_.is_some()?Some(other.data_->clone()):None<rstd::sync::Arc<Data>>()){}
+    auto operator=(const TextLineBreaks &other) -> TextLineBreaks & {if(this!=&other)data_=other.data_.is_some()?Some(other.data_->clone()):None<rstd::sync::Arc<Data>>();return *this;}
+    TextLineBreaks(TextLineBreaks &&)=default;
+    auto operator=(TextLineBreaks &&) -> TextLineBreaks & =default;
+    static auto create(ref<str> text,slice<Index> positions) -> Result<TextLineBreaks,TextError> {
+        if(text->len()>usize(~Index{}) || rstd::str_::from_utf8(text->as_bytes()).is_err())return Err(TextError::InvalidValue);
+        Index previous{};
+        for(auto position:positions){if(position<=previous || usize(position)>text->len() || !text->is_char_boundary(usize(position)))return Err(TextError::InvalidValue);previous=position;}
+        return Ok(TextLineBreaks(text,positions));
+    }
+    auto present() const -> bool {return data_.is_some();}
+    auto positions() const -> slice<Index> {return present()?(*data_)->positions.as_slice():slice<Index>{};}
+    auto matches(ref<str> text) const -> bool {return !present() || (*data_)->text.as_str()==text;}
+    auto operator==(const TextLineBreaks &other) const -> bool {
+        if(!present() || !other.present())return present()==other.present();
+        return rstd::sync::Arc<Data>::ptr_eq(*data_,*other.data_) || ((*data_)->text==(*other.data_)->text && positions()==other.positions());
+    }
+};
 struct TextRequest {
     ref<str> text{""_str}, family{"sans"_str}, language{"und"_str};
     Scalar size{16};
@@ -206,6 +240,9 @@ struct TextRequest {
     TextFontSpans font_spans;
     Scalar character_spacing{};
     TextSpacing spacing;
+    Option<Scalar> height;
+    Option<TextAutoSize> auto_size;
+    TextLineBreaks line_breaks;
 };
 struct TextFormat {
     ref<str> family{"sans"_str}, language{"und"_str};
@@ -217,8 +254,17 @@ struct TextFormat {
     Scalar line_spacing{};
     Scalar character_spacing{};
     TextSpacing spacing;
+    Index max_lines{};
+    TextOverflow overflow{TextOverflow::Clip};
+    Option<TextAutoSize> auto_size;
+    Option<FontSource> source;
+    TextLineBreaks line_breaks;
+    TextWhitespace whitespace{TextWhitespace::Preserve};
     auto valid() const -> bool {
         return finite(size) && size >= 0 && finite(line_spacing) && line_spacing >= 0 && finite(character_spacing) && spacing.valid() &&
+               (whitespace>=TextWhitespace::Preserve && whitespace<=TextWhitespace::TrimWrap) &&
+               (overflow >= TextOverflow::Clip && overflow <= TextOverflow::Ellipsis) &&
+               (auto_size.is_none() || auto_size->valid()) &&
                (alignment >= TextAlignment::Natural && alignment <= TextAlignment::Center) &&
                (direction == TextDirection::Auto || direction == TextDirection::LeftToRight ||
                 direction == TextDirection::RightToLeft) &&
@@ -338,6 +384,9 @@ struct TextLayoutData {
     Scalar character_spacing{};
     TextSpacing spacing;
     Option<Scalar> resolved_spacing;
+    Option<Scalar> font_size;
+    TextLineBreaks line_breaks;
+    bool emergency_wrap{};
 };
 class TextLayout {
     struct Data {
@@ -370,10 +419,11 @@ class TextLayout {
         if (!data.logical.valid() || !data.ink.valid() || !finite(data.baseline) || !finite(data.character_spacing) || !data.spacing.valid() ||
             (data.resolved_spacing.is_some() && !finite(*data.resolved_spacing)) ||
             (data.spacing != TextSpacing{} && data.resolved_spacing.is_none()) ||
+            (data.font_size.is_some() && (!finite(*data.font_size) || *data.font_size<0)) ||
             data.lines.is_empty())
             return Err(TextError::InvalidValue);
         auto text = data.text.as_str();
-        if (!data.inline_objects.matches(text) || !data.font_spans.matches(text)) return Err(TextError::InvalidValue);
+        if (!data.inline_objects.matches(text) || !data.font_spans.matches(text) || !data.line_breaks.matches(text)) return Err(TextError::InvalidValue);
         if (data.hidden.is_some() &&
             (data.hidden->start > data.hidden->end || data.hidden->end != bytes ||
              !text->is_char_boundary(usize(data.hidden->start))))
@@ -480,6 +530,7 @@ class TextLayout {
     auto runs() const -> slice<TextRun> { return data_->value.runs.as_slice(); }
     auto hidden_range() const -> Option<TextRange> { return data_->value.hidden; }
     auto revision() const -> Serial { return data_->value.revision; }
+    auto font_size() const -> Option<Scalar> {return data_->value.font_size;}
     auto lines() const -> slice<TextLine> { return data_->value.lines.as_slice(); }
     auto boundaries() const -> const TextBoundaries & { return data_->value.boundaries; }
     auto inline_objects() const -> const TextInlineObjects & { return data_->value.inline_objects; }
@@ -487,6 +538,8 @@ class TextLayout {
     auto character_spacing() const -> Scalar { return data_->value.character_spacing; }
     auto spacing() const -> const TextSpacing & { return data_->value.spacing; }
     auto resolved_character_spacing() const -> Scalar { return data_->value.resolved_spacing.unwrap_or(data_->value.character_spacing); }
+    auto line_breaks() const -> const TextLineBreaks & {return data_->value.line_breaks;}
+    auto emergency_wrap() const -> bool {return data_->value.emergency_wrap;}
     auto inline_boxes() const -> slice<TextInlineBox> { return data_->value.inline_boxes.as_slice(); }
     // Logical advances cover whole intersecting clusters, excluding synthetic glyphs.
     auto range_boxes(TextRange range) const -> Result<Vec<TextRangeBox>, TextError> {

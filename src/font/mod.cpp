@@ -51,10 +51,11 @@ auto FontCollection::add_font(slice<unsigned char> bytes, Index face_index)
         return Err(result.unwrap_err());
     return Ok(empty{});
 }
-auto FontCollection::register_font(slice<unsigned char> bytes, Index face_index)
+auto FontCollection::register_font(slice<unsigned char> bytes, Index face_index, Option<FontMetrics> metrics)
     -> Result<FontSource, TextError> {
     auto &state = impl_->state;
     auto guard = state.mutex.lock().unwrap();
+    if(metrics.is_some() && !metrics->valid())return Err(TextError::InvalidValue);
     if (bytes.len().to_primitive() > state.limits.font_bytes - state.source_bytes())
         return Err(TextError::Limit);
     Vec<u8> owned;
@@ -64,9 +65,10 @@ auto FontCollection::register_font(slice<unsigned char> bytes, Index face_index)
     auto added = add_source(state, rstd::move(owned), face_index, String(), true);
     if (added.is_err())
         return Err(added.unwrap_err());
+    auto source=rstd::move(added).unwrap();source->metrics=metrics;
     state.clear_cache();
     state.counters.revision = new_identity();
-    return Ok(FontSource{state.id, added.unwrap()->id});
+    return Ok(FontSource{state.id, source->id});
 }
 auto FontCollection::refresh() -> Result<empty, TextError> {
     auto &state = impl_->state;

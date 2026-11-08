@@ -14,7 +14,7 @@ struct Character {
     Scalar advance{};
     Scalar ascent{}, descent{};
     Rect ink;
-    bool newline{}, tab{}, missing{}, synthetic{};
+    bool newline{}, tab{}, missing{}, synthetic{},soft_break{};
 };
 struct BuiltLayout {
     TextLayoutData data;
@@ -52,16 +52,19 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
                       request.italic,    request.alignment, request.line_spacing};
     format.character_spacing = request.character_spacing;
     format.spacing = request.spacing;
-    if (request.overflow < TextOverflow::Clip || request.overflow > TextOverflow::ThreeDots ||
+    if (request.overflow < TextOverflow::Clip || request.overflow > TextOverflow::Ellipsis ||
         request.tabs < TextTabs::Stops || request.tabs > TextTabs::Ignore ||
         request.whitespace < TextWhitespace::Preserve ||
         request.whitespace > TextWhitespace::TrimWrap ||
         request.invalid_text < InvalidText::Reject || request.invalid_text > InvalidText::Replace)
         return Err(TextError::InvalidValue);
     if ((request.size != 0 && request.size < 1.0 / 64) || !format.valid() ||
+        (request.auto_size.is_some() && !request.auto_size->valid()) ||
+        (request.height.is_some() && (!finite(*request.height) || *request.height<0)) ||
         (request.width.is_some() && (!finite(*request.width) || *request.width < 0)))
         return Err(TextError::InvalidValue);
     if (request.size > 16384 || request.line_spacing > 1048576 || __builtin_fabs(request.character_spacing) > 1048576 ||
+        (request.height.is_some() && *request.height>1048576) ||
         (request.width.is_some() && *request.width > 1048576))
         return Err(TextError::Limit);
     auto text_valid = validate_text(request.text->as_bytes());
@@ -77,12 +80,13 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
     }
     if (request.direction == TextDirection::RightToLeft)
         return Err(TextError::Unsupported);
-    if (!request.inline_objects.matches(request.text) || !request.font_spans.matches(request.text)) return Err(TextError::InvalidValue);
+    if (!request.inline_objects.matches(request.text) || !request.font_spans.matches(request.text) || !request.line_breaks.matches(request.text)) return Err(TextError::InvalidValue);
     return Ok(empty{});
 }
-auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLayout, TextError> {
+struct PreparedText {String text;Vec<Character> characters;};
+auto prepare_text(TextRequest request,TextLimits limits) -> Result<PreparedText,TextError> {
     auto input = request.bytes.is_some() ? *request.bytes : request.text->as_bytes();
-    if (input.len() > usize(collection.limits.text_bytes))
+    if (input.len() > usize(limits.text_bytes))
         return Err(TextError::Limit);
     Vec<Character> chars;
     String normalized;
@@ -137,11 +141,17 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
         offset += consumed;
     }
     request.text = normalized.as_str();
-    auto valid = validate(request, collection.limits);
+    auto valid = validate(request, limits);
     if (valid.is_err())
         return Err(valid.unwrap_err());
     if (request.boundaries && (!request.boundaries->present() || request.boundaries->text() != request.text))
         return Err(TextError::InvalidValue);
+    auto positions=request.line_breaks.positions();usize position{};
+    for(auto &character:chars){while(position<positions.len() && positions[position]<character.end)++position;if(position<positions.len() && positions[position]==character.end){character.soft_break=true;++position;}}
+    return Ok(PreparedText{rstd::move(normalized),rstd::move(chars)});
+}
+auto build_prepared(Collection &collection,TextRequest request,const PreparedText &text) -> Result<BuiltLayout,TextError> {
+    request.text=text.text.as_str();auto chars=Vec<Character>::from(text.characters.as_slice());
     auto spacing = request.spacing.resolve(request.size, request.character_spacing);
     if (spacing.is_err()) return Err(spacing.unwrap_err());
     auto tracking = spacing.unwrap();
@@ -163,7 +173,9 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     result.data.character_spacing = request.character_spacing;
     result.data.spacing = request.spacing;
     result.data.resolved_spacing = Some(Scalar(tracking));
+    result.data.line_breaks=request.line_breaks;
     result.data.revision = collection.counters.revision;
+    result.data.font_size=Some(Scalar(request.size));
     result.fonts.push(fonts.primary.clone());
     Option<FontResolver> variants[4];
     auto resolver_at=[&](const Character &character) -> Result<FontResolver *,TextError> {
@@ -188,9 +200,10 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
             tab_width = request.size * 4;
     }
     Index glyph_count{};
-    bool want_dots = request.max_lines && request.overflow == TextOverflow::ThreeDots;
+    bool want_dots = request.max_lines && request.overflow != TextOverflow::Clip;
+    auto dot_count = request.overflow == TextOverflow::Ellipsis ? 1 : 3;
     if (want_dots)
-        chars.push(Character{.code = '.', .synthetic = true});
+        chars.push(Character{.code = request.overflow == TextOverflow::Ellipsis ? Index(0x2026) : Index('.'), .synthetic = true});
     auto objects = request.inline_objects.objects(); usize next_object{};
     for (auto &character : chars) {
         auto cp = character.code;
@@ -255,12 +268,14 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                     end = last_break;
                     break;
                 }
-                if (request.wrap == TextWrap::WordOrCharacter)
+                if (request.wrap == TextWrap::WordOrCharacter){
+                    result.data.emergency_wrap=true;
                     break;
+                }
             }
             width += advance(chars[end], width);
             ++end;
-            if (chars[end - usize(1)].code == ' ' || chars[end - usize(1)].code == '-') {
+            if (request.line_breaks.present()?chars[end-usize(1)].soft_break:(chars[end - usize(1)].code == ' ' || chars[end - usize(1)].code == '-')) {
                 last_break = end;
                 if (request.width.is_some() && request.wrap != TextWrap::None &&
                     next > *request.width)
@@ -293,7 +308,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
                     used += advance(c, used);
                     widths.push(Scalar(used));
                 }
-                while (!visible.is_empty() && used + 3 * dot.advance + (3 - 1) * tracking > *request.width) {
+                while (!visible.is_empty() && used + dot_count * dot.advance + (dot_count - 1) * tracking > *request.width) {
                     visible.pop();
                     used = widths[visible.len()];
                 }
@@ -304,7 +319,7 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
             query->hidden = Some(cut);
             if (want_dots) {
                 dot.begin = dot.end = cut;
-                for (int i = 0; i < 3; ++i)
+                for (int i = 0; i < dot_count; ++i)
                     visible.push(Character(dot));
             }
         }
@@ -463,5 +478,27 @@ auto build_layout(Collection &collection, TextRequest request) -> Result<BuiltLa
     }
     ++collection.counters.layouts;
     return Ok(rstd::move(result));
+}
+auto build_layout(Collection &collection,TextRequest request) -> Result<BuiltLayout,TextError> {
+    auto prepared=prepare_text(request,collection.limits);if(prepared.is_err())return Err(prepared.unwrap_err());
+    if(request.auto_size.is_none())return build_prepared(collection,request,*prepared);
+    auto range=*request.auto_size;request.auto_size=None();
+    auto fits=[&](const BuiltLayout &value){
+        if(value.data.hidden.is_some())return false;
+        if(request.line_breaks.present() && value.data.emergency_wrap)return false;
+        if(request.height.is_some() && value.data.logical.height>*request.height)return false;
+        if(request.width.is_some())for(const auto &line:value.data.lines)if(line.logical.width>*request.width)return false;
+        return true;
+    };
+    request.size=range.maximum;auto maximum=build_prepared(collection,request,*prepared);if(maximum.is_err())return Err(maximum.unwrap_err());
+    if(fits(*maximum) || range.minimum==range.maximum)return maximum;
+    request.size=range.minimum;auto minimum=build_prepared(collection,request,*prepared);if(minimum.is_err())return Err(minimum.unwrap_err());
+    if(!fits(*minimum))return minimum;
+    auto best=rstd::move(minimum).unwrap();Index low{},high=Index(__builtin_ceil((range.maximum-range.minimum)/range.increment));
+    while(high>low+1){auto middle=low+(high-low)/2;request.size=rstd::min(range.maximum,range.minimum+range.increment*middle);
+        auto candidate=build_prepared(collection,request,*prepared);if(candidate.is_err())return Err(candidate.unwrap_err());
+        if(fits(*candidate)){low=middle;best=rstd::move(candidate).unwrap();}else high=middle;
+    }
+    return Ok(rstd::move(best));
 }
 } // namespace vectext
