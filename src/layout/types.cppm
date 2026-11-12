@@ -280,6 +280,8 @@ struct GlyphBitmap {
 };
 struct FontRasterizer {
     virtual ~FontRasterizer() = default;
+    // Concurrent rasterization is opt-in for custom implementations.
+    virtual auto concurrent_rasterization() const -> bool { return false; }
     virtual auto rasterize(Index glyph, Scalar scale) const -> Result<GlyphBitmap, TextError> = 0;
 };
 class SystemTextService;
@@ -309,6 +311,7 @@ class FontInstance {
     }
     FontInstance(FontInstance &&) = default;
     auto operator=(FontInstance &&) -> FontInstance & = default;
+    auto concurrent_rasterization() const -> bool { return data_->rasterizer->concurrent_rasterization(); }
     auto id() const -> Serial { return data_->id; }
     auto name() const -> ref<str> { return data_->name.as_str(); }
     auto rasterize(Index glyph, Scalar scale) const -> Result<GlyphBitmap, TextError> {

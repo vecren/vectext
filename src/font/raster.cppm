@@ -6,6 +6,7 @@ namespace vectext {
 struct Rasterizer final : FontRasterizer {
     Arc<Font> font;
     explicit Rasterizer(Arc<Font> font) : font(rstd::move(font)) {}
+    auto concurrent_rasterization() const -> bool override { return true; }
     auto rasterize(Index glyph, Scalar scale) const -> Result<GlyphBitmap, TextError> override {
         return font->rasterize(glyph, scale);
     }
