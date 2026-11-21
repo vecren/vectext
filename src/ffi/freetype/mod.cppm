@@ -3,12 +3,19 @@ module;
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_COLOR_H
+#if __is_target_environment(android)
+#include FT_MULTIPLE_MASTERS_H
+#endif
 namespace vectext_freetype_constants {
 inline constexpr auto k_FT_LOAD_NO_BITMAP = FT_LOAD_NO_BITMAP;
 inline constexpr auto k_FT_LOAD_NO_HINTING = FT_LOAD_NO_HINTING;
+inline constexpr auto k_FT_STYLE_FLAG_BOLD = FT_STYLE_FLAG_BOLD;
+inline constexpr auto k_FT_STYLE_FLAG_ITALIC = FT_STYLE_FLAG_ITALIC;
 } // namespace vectext_freetype_constants
 #undef FT_LOAD_NO_BITMAP
 #undef FT_LOAD_NO_HINTING
+#undef FT_STYLE_FLAG_BOLD
+#undef FT_STYLE_FLAG_ITALIC
 
 export module vectext.ffi.freetype;
 import vectext.ffi.owner;
@@ -34,6 +41,8 @@ using ::FT_Select_Charmap;
 using ::FT_Set_Char_Size;
 inline constexpr auto FT_LOAD_NO_BITMAP = vectext_freetype_constants::k_FT_LOAD_NO_BITMAP;
 inline constexpr auto FT_LOAD_NO_HINTING = vectext_freetype_constants::k_FT_LOAD_NO_HINTING;
+inline constexpr auto FT_STYLE_FLAG_BOLD = vectext_freetype_constants::k_FT_STYLE_FLAG_BOLD;
+inline constexpr auto FT_STYLE_FLAG_ITALIC = vectext_freetype_constants::k_FT_STYLE_FLAG_ITALIC;
 inline bool is_scalable(FT_Face face) { return FT_IS_SCALABLE(face); }
 
 using ::FT_COLOR_NO_ROOT_TRANSFORM;
@@ -45,4 +54,11 @@ using ::FT_OpaquePaint;
 using ::FT_UInt;
 using Library = Owner<FT_LibraryRec_, FT_Done_FreeType>;
 using Face = Owner<FT_FaceRec_, FT_Done_Face>;
+#if __is_target_environment(android)
+using ::FT_Done_MM_Var;
+using ::FT_Fixed;
+using ::FT_Get_MM_Var;
+using ::FT_MM_Var;
+using ::FT_Set_Var_Design_Coordinates;
+#endif
 } // namespace vectext::ffi::freetype

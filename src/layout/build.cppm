@@ -233,11 +233,8 @@ auto build_prepared(Collection &collection,TextRequest request,const PreparedTex
                 result.fonts.push(font.clone());
             character.font = static_cast<Index>(slot.to_primitive());
             character.glyph = glyph;
-            auto measured = font->measure(glyph);
-            if (measured.is_err())
-                return Err(measured.unwrap_err());
-            character.advance = measured->advance;
-            character.ink = measured->ink;
+            character.advance = resolved->metrics.advance;
+            character.ink = resolved->metrics.ink;
             if (!finite(character.advance) || character.advance < 0 || !character.ink.valid())
                 return Err(TextError::Font);
         }

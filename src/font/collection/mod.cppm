@@ -1,6 +1,8 @@
 module vectext:font.collection;
 import :font.collection.common;
-#if __is_target_os(macos)
+#if __is_target_environment(android)
+import :font.collection.android;
+#elif __is_target_os(macos)
 import :font.collection.coretext;
 #elif __is_target_os(windows)
 import :font.collection.directwrite;
@@ -14,6 +16,7 @@ struct ResolvedGlyph {
     Arc<Font> font;
     Index glyph{};
     bool missing{};
+    GlyphMetrics metrics;
 };
 struct FontResolver {
     Vec<Candidate> choices;
@@ -28,10 +31,17 @@ struct FontResolver {
                 return Err(loaded.unwrap_err());
             auto font = rstd::move(loaded).unwrap();
             auto glyph = font->glyph(cp);
-            if (glyph)
-                return Ok(ResolvedGlyph{rstd::move(font), glyph, false});
+            if (!glyph)
+                continue;
+            auto measured = font->layout_metrics(glyph);
+            if (measured.is_err()) {
+                if (measured.unwrap_err() == TextError::Unsupported)
+                    continue;
+                return Err(measured.unwrap_err());
+            }
+            return Ok(ResolvedGlyph{rstd::move(font), glyph, false, measured.unwrap()});
         }
-#if __is_target_os(windows)
+#if __is_target_os(windows) || __is_target_environment(android)
         auto fallback = fallback_candidate(collection, choices, request, cp);
         if (fallback.is_err())
             return Err(fallback.unwrap_err());
@@ -42,11 +52,19 @@ struct FontResolver {
             auto font = rstd::move(loaded).unwrap();
             auto glyph = font->glyph(cp);
             choices.push(rstd::move(**fallback));
-            if (glyph)
-                return Ok(ResolvedGlyph{rstd::move(font), glyph, false});
+            if (glyph) {
+                auto measured = font->layout_metrics(glyph);
+                if (measured.is_ok())
+                    return Ok(ResolvedGlyph{rstd::move(font), glyph, false, measured.unwrap()});
+                if (measured.unwrap_err() != TextError::Unsupported)
+                    return Err(measured.unwrap_err());
+            }
         }
 #endif
-        return Ok(ResolvedGlyph{primary.clone(), 0, true});
+        auto measured = primary->layout_metrics(0);
+        if (measured.is_err())
+            return Err(measured.unwrap_err());
+        return Ok(ResolvedGlyph{primary.clone(), 0, true, measured.unwrap()});
     }
 };
 auto resolver(Collection &collection, TextRequest request) -> Result<FontResolver, TextError> {

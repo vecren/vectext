@@ -48,16 +48,32 @@ struct Font {
         auto guard = mutex.lock().unwrap();
         return native.glyph(codepoint);
     }
-    auto measure(Index glyph) -> Result<GlyphMetrics, TextError> {
+    auto measure_impl(Index glyph, bool for_layout) -> Result<GlyphMetrics, TextError> {
         if (size == 0) return Ok(GlyphMetrics{});
         auto guard = mutex.lock().unwrap();
         auto value=native.measure(glyph);
+        if (value.is_ok() && for_layout) {
+            auto supported = []<class Native>(Native &face) {
+                if constexpr (requires { face.loaded_glyph_supported(); })
+                    return face.loaded_glyph_supported();
+                else
+                    return true;
+            };
+            if (!supported(native))
+                return Err(TextError::Unsupported);
+        }
         if (value.is_ok() && embolden) {
             auto strength=size/24;
             if (value->advance>0) value->advance+=strength;
             if (value->ink.width>0 && value->ink.height>0) {value->ink.width+=strength; value->ink.height+=strength;}
         }
         return value;
+    }
+    auto measure(Index glyph) -> Result<GlyphMetrics, TextError> {
+        return measure_impl(glyph, false);
+    }
+    auto layout_metrics(Index glyph) -> Result<GlyphMetrics, TextError> {
+        return measure_impl(glyph, true);
     }
     auto rasterize(Index glyph, Scalar scale) -> Result<GlyphBitmap, TextError> {
         if (size == 0) return Ok(GlyphBitmap{0, 0, {}, scale, {}});

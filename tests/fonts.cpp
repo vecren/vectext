@@ -244,15 +244,37 @@ TEST(VectextFonts, RasterBudgetAndMetrics) {
     EXPECT_TRUE(empty.coverage.is_empty());
     EXPECT_TRUE(space.advance > 0);
 }
-TEST(VectextFonts, ColorOnlyGlyphIsExplicitlyUnsupported) {
+TEST(VectextFonts, ColorOnlyGlyphFallbackAndRasterContract) {
     auto collection = FontCollection::create({.system_fonts = false}).unwrap();
     auto bytes = font_data("ColorLayers.ttf"_str);
-    collection.add_font(bytes.as_slice()).unwrap();
+    auto source = collection.register_font(bytes.as_slice()).unwrap();
     SystemTextService service(collection);
-    auto layout = service.layout({.text = "A"_str}).unwrap();
+    TextRequest request{.text = "A"_str, .source = Some(source)};
+    auto layout = service.layout(request).unwrap();
     const auto &glyph = layout.glyphs()[usize()];
+#if !__is_target_os(macos) && !__is_target_os(windows)
+    EXPECT_EQ(layout.missing_glyphs(), 1u);
+    EXPECT_TRUE(glyph.missing);
+    EXPECT_EQ(glyph.glyph, 0u);
+    auto &font = layout.fonts()[usize(glyph.font)];
+    EXPECT_TRUE(!font.rasterize(glyph.glyph, 1).unwrap().coverage.is_empty());
+    EXPECT_EQ(font.rasterize(2, 1).unwrap_err(), TextError::Unsupported);
+    auto outline_bytes = font_data("DejaVuSans.ttf"_str);
+    auto outline = collection.register_font(outline_bytes.as_slice()).unwrap();
+    auto fallback = service.layout(request).unwrap();
+    request.source = Some(outline);
+    auto expected = service.layout(request).unwrap();
+    EXPECT_EQ(fallback.missing_glyphs(), 0u);
+    auto &selected = fallback.glyphs()[usize()];
+    EXPECT_EQ(fallback.fonts()[usize(selected.font)].id(), expected.fonts()[usize()].id());
+    EXPECT_EQ(selected.glyph, expected.glyphs()[usize()].glyph);
+    EXPECT_EQ(selected.advance, expected.glyphs()[usize()].advance);
+    EXPECT_EQ(fallback.ink_bounds(), expected.ink_bounds());
+    EXPECT_TRUE(fallback.fonts()[usize(selected.font)].rasterize(selected.glyph, 1).is_ok());
+#else
     EXPECT_EQ(layout.fonts()[usize(glyph.font)].rasterize(glyph.glyph, 1).unwrap_err(),
               TextError::Unsupported);
+#endif
 }
 #if !__is_target_os(macos) && !__is_target_os(windows)
 TEST(VectextFonts, FileSourcesRefreshAndBudgetLifetime) {

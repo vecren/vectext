@@ -1,5 +1,10 @@
 module vectext:platform;
-#if __is_target_os(macos)
+#if __is_target_environment(android)
+import :platform.android;
+namespace vectext {
+namespace platform = android;
+}
+#elif __is_target_os(macos)
 import :platform.coretext;
 namespace vectext {
 namespace platform = coretext;

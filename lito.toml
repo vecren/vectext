@@ -19,8 +19,24 @@ rstd-std = { version = "0.1.5", pub = true }
 rstd-nostd = { version = "0.1.5", usage = "link" }
 
 [external-dependencies.pkg-config]
-fontconfig = { module = "fontconfig", version = ">= 2.14", pub = true, condition = 'target.os != "macos" && target.os != "windows"' }
-freetype = { module = "freetype2", version = ">= 24.3", pub = true, condition = 'target.os != "macos" && target.os != "windows"' }
+fontconfig = { module = "fontconfig", version = ">= 2.14", pub = true, condition = 'target.os != "macos" && target.os != "windows" && target.os != "android"' }
+freetype = { module = "freetype2", version = ">= 24.3", pub = true, condition = 'target.os != "macos" && target.os != "windows" && target.os != "android"' }
+
+[external-sources.freetype]
+git = "https://github.com/freetype/freetype.git"
+rev = "37515cf56ba3349656049edbed89ffc6f6466f2d"
+
+[external-dependencies.cmake.android-freetype]
+package = "freetype"
+source = "freetype"
+condition = 'target.os == "android"'
+targets = [{ name = "Freetype::Freetype", pub = true }]
+cache = { BUILD_SHARED_LIBS = false, CMAKE_POSITION_INDEPENDENT_CODE = true, FT_DISABLE_ZLIB = true, FT_DISABLE_BZIP2 = true, FT_DISABLE_PNG = true, FT_DISABLE_HARFBUZZ = true, FT_DISABLE_BROTLI = true, FT_DISABLE_HVF = true }
+
+[[when]]
+condition = 'target.os == "android"'
+[when.usage]
+system-libraries = ["android"]
 
 [[when]]
 condition = 'target.os == "macos"'

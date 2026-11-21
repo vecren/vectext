@@ -61,6 +61,9 @@ struct Face {
         auto status = set_size(1);
         if (status.is_err())
             return status;
+        return refresh_metrics();
+    }
+    auto refresh_metrics() -> Result<empty, TextError> {
         ascent = face->size->metrics.ascender / 64.0;
         descent = -face->size->metrics.descender / 64.0;
         height = face->size->metrics.height / 64.0;
@@ -89,6 +92,19 @@ struct Face {
             face->glyph->advance.x / 64.0,
             {m.horiBearingX / 64.0, -m.horiBearingY / 64.0, m.width / 64.0, m.height / 64.0}});
     }
+    auto loaded_glyph_supported() const -> bool {
+        if (face->glyph->format != ft::FT_GLYPH_FORMAT_OUTLINE)
+            return false;
+        if (face->glyph->outline.n_points)
+            return true;
+        ft::FT_LayerIterator iterator{};
+        ft::FT_UInt layer{}, color{};
+        ft::FT_OpaquePaint paint{};
+        return !ft::FT_Get_Color_Glyph_Layer(face.get(), face->glyph->glyph_index, &layer, &color,
+                                            &iterator) &&
+               !ft::FT_Get_Color_Glyph_Paint(face.get(), face->glyph->glyph_index,
+                                            ft::FT_COLOR_NO_ROOT_TRANSFORM, &paint);
+    }
     auto rasterize(Index glyph, Scalar scale) -> Result<GlyphBitmap, TextError> {
         auto face = this->face.get();
         if (glyph >= static_cast<Serial>(face->num_glyphs))
@@ -98,16 +114,8 @@ struct Face {
             return Err(size.unwrap_err());
         if (ft::FT_Load_Glyph(face, glyph, ft::FT_LOAD_NO_BITMAP | ft::FT_LOAD_NO_HINTING))
             return Err(TextError::Raster);
-        if (face->glyph->format != ft::FT_GLYPH_FORMAT_OUTLINE)
+        if (!loaded_glyph_supported())
             return Err(TextError::Unsupported);
-        if (!face->glyph->outline.n_points) {
-            ft::FT_LayerIterator iterator{};
-            ft::FT_UInt layer{}, color{};
-            ft::FT_OpaquePaint paint{};
-            if (ft::FT_Get_Color_Glyph_Layer(face, glyph, &layer, &color, &iterator) ||
-                ft::FT_Get_Color_Glyph_Paint(face, glyph, ft::FT_COLOR_NO_ROOT_TRANSFORM, &paint))
-                return Err(TextError::Unsupported);
-        }
         const auto &metrics = face->glyph->metrics;
         auto width = static_cast<Serial>((metrics.width + 63) / 64 + 2);
         auto height = static_cast<Serial>((metrics.height + 63) / 64 + 2);
