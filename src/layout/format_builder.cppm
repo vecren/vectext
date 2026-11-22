@@ -82,6 +82,14 @@ class TextFormatBuilder {
         line_spacing(rstd::move(value));
         return rstd::move(*this);
     }
+    auto line_metrics(TextLineMetrics value) & -> TextFormatBuilder & {
+        value_.line_metrics = value;
+        return *this;
+    }
+    auto line_metrics(TextLineMetrics value) && -> TextFormatBuilder {
+        line_metrics(value);
+        return rstd::move(*this);
+    }
     auto character_spacing(Scalar value) & -> TextFormatBuilder & {
         value_.character_spacing = rstd::move(value);
         return *this;

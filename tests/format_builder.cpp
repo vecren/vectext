@@ -15,14 +15,15 @@ TEST(TextFormatBuilder, PreparedResultsAndExternalStringsSurviveTheBuilder) {
     TextFormat first, second;
     {
         Index position = 2;
-        auto breaks = TextLineBreaks::create(
-                          "a b"_str, slice<Index>::from_raw_parts(&position, usize(1)))
-                          .unwrap();
+        auto breaks =
+            TextLineBreaks::create("a b"_str, slice<Index>::from_raw_parts(&position, usize(1)))
+                .unwrap();
         auto builder = TextFormatBuilder{}
                            .family(family.as_str())
                            .language(language.as_str())
                            .size(20)
                            .source(Some(FontSource{4, 9}))
+                           .line_metrics(TextLineMetrics::PrimaryFont)
                            .line_breaks(rstd::move(breaks));
         static_assert(__is_same(decltype(builder.bold(true)), TextFormatBuilder &));
         first = builder.build();
@@ -41,6 +42,8 @@ TEST(TextFormatBuilder, PreparedResultsAndExternalStringsSurviveTheBuilder) {
     ASSERT_EQ(second.line_breaks.positions().len(), usize(1));
     EXPECT_EQ(second.line_breaks.positions()[usize()], 2u);
     EXPECT_EQ(first.line_breaks, second.line_breaks);
+    EXPECT_EQ(first.line_metrics, TextLineMetrics::PrimaryFont);
+    EXPECT_EQ(second.line_metrics, TextLineMetrics::PrimaryFont);
 }
 
 TEST(TextFormatBuilder, FinalValuesCanBeRepairedAndOptionalSettingsCleared) {
@@ -49,7 +52,8 @@ TEST(TextFormatBuilder, FinalValuesCanBeRepairedAndOptionalSettingsCleared) {
                        .auto_size(Some(TextAutoSize{10, 30, 1}))
                        .source(Some(FontSource{1, 2}));
     EXPECT_FALSE(builder.build().valid());
-    auto format = builder.size(18).auto_size(None<TextAutoSize>()).source(None<FontSource>()).build();
+    auto format =
+        builder.size(18).auto_size(None<TextAutoSize>()).source(None<FontSource>()).build();
     EXPECT_TRUE(format.valid());
     EXPECT_TRUE(format.auto_size.is_none());
     EXPECT_TRUE(format.source.is_none());

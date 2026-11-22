@@ -218,6 +218,7 @@ class TextLineBreaks {
         return rstd::sync::Arc<Data>::ptr_eq(*data_,*other.data_) || ((*data_)->text==(*other.data_)->text && positions()==other.positions());
     }
 };
+enum class TextLineMetrics { AllFonts, PrimaryFont };
 struct TextRequest {
     ref<str> text{""_str}, family{"sans"_str}, language{"und"_str};
     Scalar size{16};
@@ -243,6 +244,7 @@ struct TextRequest {
     Option<Scalar> height;
     Option<TextAutoSize> auto_size;
     TextLineBreaks line_breaks;
+    TextLineMetrics line_metrics{TextLineMetrics::AllFonts};
 };
 struct TextFormat {
     ref<str> family{"sans"_str}, language{"und"_str};
@@ -260,9 +262,11 @@ struct TextFormat {
     Option<FontSource> source;
     TextLineBreaks line_breaks;
     TextWhitespace whitespace{TextWhitespace::Preserve};
+    TextLineMetrics line_metrics{TextLineMetrics::AllFonts};
     auto valid() const -> bool {
         return finite(size) && size >= 0 && finite(line_spacing) && line_spacing >= 0 && finite(character_spacing) && spacing.valid() &&
                (whitespace>=TextWhitespace::Preserve && whitespace<=TextWhitespace::TrimWrap) &&
+               (line_metrics>=TextLineMetrics::AllFonts && line_metrics<=TextLineMetrics::PrimaryFont) &&
                (overflow >= TextOverflow::Clip && overflow <= TextOverflow::Ellipsis) &&
                (auto_size.is_none() || auto_size->valid()) &&
                (alignment >= TextAlignment::Natural && alignment <= TextAlignment::Center) &&

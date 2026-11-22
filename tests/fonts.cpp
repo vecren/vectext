@@ -7,6 +7,52 @@ using namespace vectext::tests;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace vectext;
+TEST(VectextFonts, PrimaryLineMetricsKeepFallbackGlyphsWithoutExpandingLines) {
+    auto collection = FontCollection::create({.system_fonts = false}).unwrap();
+    auto latin = font_data("DejaVuSans.ttf"_str);
+    auto cjk = font_data("NotoSansCJK-subset.ttf"_str);
+    auto primary =
+        collection.register_font(latin.as_slice(), 0, Some(FontMetrics{.8, .2, 1})).unwrap();
+    collection.register_font(cjk.as_slice(), 0, Some(FontMetrics{2, 1, 3})).unwrap();
+    SystemTextService service(collection);
+    TextRequest request{.text = "A中\nA"_str, .size = 20, .source = Some(primary)};
+    auto expanded = service.layout(request).unwrap();
+    EXPECT_EQ(expanded.lines()[usize()].logical.height, 60.);
+    request.line_metrics = TextLineMetrics::PrimaryFont;
+    auto fixed = service.layout(request).unwrap();
+    EXPECT_EQ(fixed.lines()[usize()].logical.height, 20.);
+    EXPECT_EQ(fixed.lines()[usize(1)].baseline - fixed.lines()[usize()].baseline, 20.);
+    EXPECT_EQ(fixed.typographic_bounds().height, 40.);
+    ASSERT_EQ(fixed.glyphs().len(), expanded.glyphs().len());
+    EXPECT_EQ(fixed.missing_glyphs(), 0u);
+    for (usize index{}; index < fixed.glyphs().len(); ++index) {
+        const auto &a = fixed.glyphs()[index], &b = expanded.glyphs()[index];
+        EXPECT_EQ(a.glyph, b.glyph);
+        EXPECT_EQ(a.advance, b.advance);
+        EXPECT_EQ(fixed.fonts()[usize(a.font)].id(), expanded.fonts()[usize(b.font)].id());
+    }
+    request.line_spacing = 3;
+    auto spaced = service.layout(request).unwrap();
+    EXPECT_EQ(spaced.lines()[usize(1)].baseline - spaced.lines()[usize()].baseline, 23.);
+    request.line_metrics = TextLineMetrics(99);
+    EXPECT_EQ(service.layout(request).unwrap_err(), TextError::InvalidValue);
+}
+
+TEST(VectextFonts, PrimaryLineMetricsStillIncludeInlineObjectExtents) {
+    auto service = fixed_service();
+    TextRequest request{
+        .text = "A\uFFFC\nA"_str, .size = 20, .line_metrics = TextLineMetrics::PrimaryFont};
+    TextInlineObject object{{1, 4}, 10, 80, 20, {0, -80, 10, 100}};
+    request.inline_objects =
+        TextInlineObjects::create(request.text,
+                                  slice<TextInlineObject>::from_raw_parts(&object, usize(1)))
+            .unwrap();
+    const auto layout = service.layout(request).unwrap();
+    EXPECT_EQ(layout.lines()[usize()].ascent, 80.);
+    EXPECT_EQ(layout.lines()[usize()].descent, 20.);
+    EXPECT_GE(layout.lines()[usize()].logical.height, 100.);
+}
+
 TEST(VectextFonts, FontSpanOwnershipAndValidation) {
     auto text=String::make("A中文B"_str);
     TextFontSpan input[]{{{1,4},Some(true),{}},{{4,7},Some(true),{}}};

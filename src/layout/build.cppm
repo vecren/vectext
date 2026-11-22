@@ -52,6 +52,7 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
                       request.italic,    request.alignment, request.line_spacing};
     format.character_spacing = request.character_spacing;
     format.spacing = request.spacing;
+    format.line_metrics = request.line_metrics;
     if (request.overflow < TextOverflow::Clip || request.overflow > TextOverflow::Ellipsis ||
         request.tabs < TextTabs::Stops || request.tabs > TextTabs::Ignore ||
         request.whitespace < TextWhitespace::Preserve ||
@@ -336,6 +337,7 @@ auto build_prepared(Collection &collection,TextRequest request,const PreparedTex
                 if (c.descent > descent) descent = c.descent;
                 continue;
             }
+            if (request.line_metrics == TextLineMetrics::PrimaryFont) continue;
             auto &font = result.fonts[usize(c.font)];
             if (font->ascent > ascent)
                 ascent = font->ascent;
