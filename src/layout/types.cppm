@@ -278,11 +278,20 @@ struct GlyphBitmap {
     Scalar scale{1};
     Vec<unsigned char> coverage;
 };
+enum class GlyphOutlineVerb { Move, Line, Quadratic, Cubic, Close };
+struct GlyphOutlineCommand {
+    GlyphOutlineVerb verb;
+    Point end, control1, control2;
+};
+struct GlyphOutline {
+    Vec<GlyphOutlineCommand> commands;
+};
 struct FontRasterizer {
     virtual ~FontRasterizer() = default;
     // Concurrent rasterization is opt-in for custom implementations.
     virtual auto concurrent_rasterization() const -> bool { return false; }
     virtual auto rasterize(Index glyph, Scalar scale) const -> Result<GlyphBitmap, TextError> = 0;
+    virtual auto outline(Index) const -> Result<GlyphOutline, TextError> { return Err(TextError::Unsupported); }
 };
 class SystemTextService;
 class FontInstance {
@@ -314,6 +323,8 @@ class FontInstance {
     auto concurrent_rasterization() const -> bool { return data_->rasterizer->concurrent_rasterization(); }
     auto id() const -> Serial { return data_->id; }
     auto name() const -> ref<str> { return data_->name.as_str(); }
+    // Coordinates are relative to the glyph baseline at the layout size, with Y pointing down.
+    auto outline(Index glyph) const -> Result<GlyphOutline, TextError> { return data_->rasterizer->outline(glyph); }
     auto rasterize(Index glyph, Scalar scale) const -> Result<GlyphBitmap, TextError> {
         if (!finite(scale) || scale <= 0 || scale > 64)
             return Err(TextError::InvalidValue);

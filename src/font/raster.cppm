@@ -10,5 +10,6 @@ struct Rasterizer final : FontRasterizer {
     auto rasterize(Index glyph, Scalar scale) const -> Result<GlyphBitmap, TextError> override {
         return font->rasterize(glyph, scale);
     }
+    auto outline(Index glyph) const -> Result<GlyphOutline, TextError> override { return font->outline(glyph); }
 };
 } // namespace vectext

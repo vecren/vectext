@@ -1,11 +1,18 @@
 module;
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
+#include <d2d1.h>
 #include <dwrite_3.h>
 export module vectext.ffi.directwrite;
 import vectext.ffi.owner;
 export namespace vectext::ffi::directwrite {
 using ::BOOL;
+using ::D2D1_BEZIER_SEGMENT;
+using ::D2D1_FIGURE_BEGIN;
+using ::D2D1_FIGURE_END;
+using ::D2D1_FILL_MODE;
+using ::D2D1_PATH_SEGMENT;
+using ::D2D1_POINT_2F;
 using ::DWRITE_FONT_FACE_TYPE;
 using ::DWRITE_FONT_FILE_TYPE;
 using ::DWRITE_FONT_METRICS;
@@ -48,6 +55,7 @@ using ::IDWriteFontFaceReference;
 using ::IDWriteFontFallback;
 using ::IDWriteFontFamily;
 using ::IDWriteFontFile;
+using ::IDWriteGeometrySink;
 using ::IDWriteGlyphRunAnalysis;
 using ::IDWriteInMemoryFontFileLoader;
 using ::IDWriteLocalizedStrings;

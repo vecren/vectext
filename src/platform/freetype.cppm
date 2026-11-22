@@ -7,6 +7,7 @@ import vectext.ffi.freetype;
 using namespace rstd::prelude;
 namespace vectext::freetype {
 namespace ft = ffi::freetype;
+auto outline_point(const ft::FT_Vector *point) -> Point { return {point->x / 64.0, -(point->y / 64.0)}; }
 auto bitmap_coverage(const ft::FT_Bitmap &bitmap, TextLimits limits)
     -> Result<Vec<unsigned char>, TextError> {
     if (bitmap.width > limits.bitmap_extent || bitmap.rows > limits.bitmap_extent ||
@@ -104,6 +105,37 @@ struct Face {
                                             &iterator) &&
                !ft::FT_Get_Color_Glyph_Paint(face.get(), face->glyph->glyph_index,
                                             ft::FT_COLOR_NO_ROOT_TRANSFORM, &paint);
+    }
+    auto outline(Index glyph) -> Result<GlyphOutline, TextError> {
+        auto native = face.get();
+        if (glyph >= static_cast<Serial>(native->num_glyphs)) return Err(TextError::InvalidIndex);
+        auto status = set_size(1);
+        if (status.is_err()) return Err(status.unwrap_err());
+        if (ft::FT_Load_Glyph(native, glyph, ft::FT_LOAD_NO_BITMAP | ft::FT_LOAD_NO_HINTING))
+            return Err(TextError::Font);
+        if (!loaded_glyph_supported()) return Err(TextError::Unsupported);
+        GlyphOutlineBuilder builder;
+        const ft::FT_Outline_Funcs callbacks{
+            [](const ft::FT_Vector *to, void *data) -> int {
+                static_cast<GlyphOutlineBuilder *>(data)->move(outline_point(to));
+                return 0;
+            },
+            [](const ft::FT_Vector *to, void *data) -> int {
+                static_cast<GlyphOutlineBuilder *>(data)->line(outline_point(to));
+                return 0;
+            },
+            [](const ft::FT_Vector *control, const ft::FT_Vector *to, void *data) -> int {
+                static_cast<GlyphOutlineBuilder *>(data)->quadratic(outline_point(control), outline_point(to));
+                return 0;
+            },
+            [](const ft::FT_Vector *first, const ft::FT_Vector *second, const ft::FT_Vector *to, void *data) -> int {
+                static_cast<GlyphOutlineBuilder *>(data)->cubic(outline_point(first), outline_point(second),
+                                                               outline_point(to));
+                return 0;
+            }, 0, 0};
+        if (ft::FT_Outline_Decompose(&native->glyph->outline, &callbacks, &builder))
+            return Err(TextError::Font);
+        return builder.finish();
     }
     auto rasterize(Index glyph, Scalar scale) -> Result<GlyphBitmap, TextError> {
         auto face = this->face.get();

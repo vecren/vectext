@@ -3,6 +3,7 @@ module;
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_COLOR_H
+#include FT_OUTLINE_H
 #if __is_target_environment(android)
 #include FT_MULTIPLE_MASTERS_H
 #endif
@@ -32,6 +33,8 @@ using ::FT_Init_FreeType;
 using ::FT_Library;
 using ::FT_Load_Glyph;
 using ::FT_New_Memory_Face;
+using ::FT_Outline_Decompose;
+using ::FT_Outline_Funcs;
 using ::FT_PIXEL_MODE_BGRA;
 using ::FT_PIXEL_MODE_GRAY;
 using ::FT_PIXEL_MODE_MONO;
@@ -52,6 +55,7 @@ using ::FT_Get_Color_Glyph_Paint;
 using ::FT_LayerIterator;
 using ::FT_OpaquePaint;
 using ::FT_UInt;
+using ::FT_Vector;
 using Library = Owner<FT_LibraryRec_, FT_Done_FreeType>;
 using Face = Owner<FT_FaceRec_, FT_Done_Face>;
 #if __is_target_environment(android)

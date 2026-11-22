@@ -75,6 +75,11 @@ struct Font {
     auto layout_metrics(Index glyph) -> Result<GlyphMetrics, TextError> {
         return measure_impl(glyph, true);
     }
+    auto outline(Index glyph) -> Result<GlyphOutline, TextError> {
+        if (size == 0) return Ok(GlyphOutline{});
+        auto guard = mutex.lock().unwrap();
+        return native.outline(glyph);
+    }
     auto rasterize(Index glyph, Scalar scale) -> Result<GlyphBitmap, TextError> {
         if (size == 0) return Ok(GlyphBitmap{0, 0, {}, scale, {}});
         auto guard = mutex.lock().unwrap();

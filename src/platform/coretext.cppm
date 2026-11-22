@@ -213,6 +213,44 @@ struct Face {
                                {bounds.origin.x, -bounds.origin.y - bounds.size.height,
                                 bounds.size.width, bounds.size.height}});
     }
+    auto empty_glyph(Index index) -> Result<empty, TextError> {
+        const unsigned color_tables[]{0x434f4c52, 0x43424454, 0x73626978, 0x53564720};
+        for (auto table : color_tables) {
+            Owned<cf::CFDataRef> data(
+                ct::CTFontCopyTable(font.get(), table, ct::kCTFontTableOptionNoOptions));
+            if (data) return Err(TextError::Unsupported);
+        }
+        auto metrics = measure(index);
+        if (metrics.is_err()) return Err(metrics.unwrap_err());
+        if (metrics->ink.width > 0 && metrics->ink.height > 0) return Err(TextError::Unsupported);
+        return Ok(empty{});
+    }
+    auto outline(Index index) -> Result<GlyphOutline, TextError> {
+        if (index >= ct::CTFontGetGlyphCount(font.get())) return Err(TextError::InvalidIndex);
+        ffi::Owner<rstd::mtp::rm_ptr<cg::CGPathRef>, cg::CGPathRelease> path(
+            ct::CTFontCreatePathForGlyph(font.get(), static_cast<cg::CGGlyph>(index), nullptr));
+        if (!path || cg::CGPathIsEmpty(path.get())) {
+            auto status = empty_glyph(index);
+            if (status.is_err()) return Err(status.unwrap_err());
+            return Ok(GlyphOutline{});
+        }
+        GlyphOutlineBuilder builder;
+        cg::CGPathApply(path.get(), &builder, [](void *data, const cg::CGPathElement *element) {
+            auto &output = *static_cast<GlyphOutlineBuilder *>(data);
+            auto point = [element](unsigned index) {
+                const auto value = element->points[index];
+                return Point{value.x, -value.y};
+            };
+            switch (element->type) {
+            case cg::kCGPathElementMoveToPoint: output.move(point(0)); break;
+            case cg::kCGPathElementAddLineToPoint: output.line(point(0)); break;
+            case cg::kCGPathElementAddQuadCurveToPoint: output.quadratic(point(0), point(1)); break;
+            case cg::kCGPathElementAddCurveToPoint: output.cubic(point(0), point(1), point(2)); break;
+            case cg::kCGPathElementCloseSubpath: output.close(); break;
+            }
+        });
+        return builder.finish();
+    }
     auto rasterize(Index index, Scalar scale) -> Result<GlyphBitmap, TextError> {
         if (index >= ct::CTFontGetGlyphCount(font.get()))
             return Err(TextError::InvalidIndex);
@@ -220,18 +258,8 @@ struct Face {
         ffi::Owner<rstd::mtp::rm_ptr<cg::CGPathRef>, cg::CGPathRelease> path(
             ct::CTFontCreatePathForGlyph(font.get(), static_cast<cg::CGGlyph>(index), &transform));
         if (!path || cg::CGPathIsEmpty(path.get())) {
-            const unsigned color_tables[]{0x434f4c52, 0x43424454, 0x73626978, 0x53564720};
-            for (auto table : color_tables) {
-                Owned<cf::CFDataRef> data(
-                    ct::CTFontCopyTable(font.get(), table, ct::kCTFontTableOptionNoOptions));
-                if (data)
-                    return Err(TextError::Unsupported);
-            }
-            auto metrics = measure(index);
-            if (metrics.is_err())
-                return Err(metrics.unwrap_err());
-            if (metrics->ink.width > 0 && metrics->ink.height > 0)
-                return Err(TextError::Unsupported);
+            auto status = empty_glyph(index);
+            if (status.is_err()) return Err(status.unwrap_err());
             return Ok(GlyphBitmap{0, 0, {}, scale, {}});
         }
         auto bounds = cg::CGPathGetPathBoundingBox(path.get());

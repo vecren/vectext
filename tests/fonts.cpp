@@ -25,6 +25,46 @@ TEST(VectextFonts, FontSpanOwnershipAndValidation) {
     auto normal=TextFontSpans::create("A"_str,slice<TextFontSpan>::from_raw_parts(&regular,usize(1))).unwrap();
     EXPECT_FALSE(normal.style(0,{true,false}).bold);
 }
+TEST(VectextFonts, OutlineKeepsClosedContoursAtTheLayoutSize) {
+    auto service = fixed_service();
+    auto layout = service.layout({.text = "a "_str, .family = "DejaVu Sans"_str, .size = 24}).unwrap();
+    const auto &glyph = layout.glyphs()[usize(0)], &space = layout.glyphs()[usize(1)];
+    const auto &font = layout.fonts()[usize(glyph.font)];
+    const auto path = font.outline(glyph.glyph).unwrap();
+    unsigned contours{}, curves{};
+    bool open{};
+    for (const auto &command : path.commands) {
+        if (command.verb == GlyphOutlineVerb::Move) {
+            EXPECT_FALSE(open);
+            open = true;
+            EXPECT_TRUE(command.end.y <= 1 && command.end.y >= -24);
+        } else {
+            EXPECT_TRUE(open);
+            if (command.verb == GlyphOutlineVerb::Close) {
+                open = false;
+                ++contours;
+            }
+            if (command.verb == GlyphOutlineVerb::Quadratic || command.verb == GlyphOutlineVerb::Cubic)
+                ++curves;
+        }
+    }
+    ASSERT_EQ(contours, 2u);
+    EXPECT_FALSE(open);
+    EXPECT_TRUE(curves > 0);
+    EXPECT_TRUE(layout.fonts()[usize(space.font)].outline(space.glyph).unwrap().commands.is_empty());
+    EXPECT_EQ(font.outline(~Index{}).unwrap_err(), TextError::InvalidIndex);
+
+    (void)font.rasterize(glyph.glyph, 2).unwrap();
+    const auto again = font.outline(glyph.glyph).unwrap();
+    ASSERT_EQ(path.commands.len(), again.commands.len());
+    for (usize i{}; i < path.commands.len(); ++i) {
+        const auto &before = path.commands[i], &after = again.commands[i];
+        EXPECT_EQ(before.verb, after.verb);
+        EXPECT_EQ(before.end, after.end);
+        EXPECT_EQ(before.control1, after.control1);
+        EXPECT_EQ(before.control2, after.control2);
+    }
+}
 TEST(VectextFonts, FontSpansSelectNativeFacesAndRestore) {
     auto service=fixed_service(); TextRequest request{.text="ABCABCABC"_str,.family="DejaVu Sans"_str,.size=24};
     auto normal=service.layout(request).unwrap(); request.bold=true;

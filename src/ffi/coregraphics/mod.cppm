@@ -17,10 +17,18 @@ using ::CGContextSetGrayFillColor;
 using ::CGContextSetShouldAntialias;
 using ::CGContextTranslateCTM;
 using ::CGGlyph;
+using ::CGPathApply;
+using ::CGPathElement;
 using ::CGPathGetPathBoundingBox;
 using ::CGPathIsEmpty;
 using ::CGPathRef;
 using ::CGPathRelease;
+using ::CGPoint;
 using ::CGSize;
 using ::kCGImageAlphaNone;
+using ::kCGPathElementAddCurveToPoint;
+using ::kCGPathElementAddLineToPoint;
+using ::kCGPathElementAddQuadCurveToPoint;
+using ::kCGPathElementCloseSubpath;
+using ::kCGPathElementMoveToPoint;
 } // namespace vectext::ffi::coregraphics

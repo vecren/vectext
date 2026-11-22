@@ -281,6 +281,27 @@ auto system_match(Config &config, TextRequest request, Index cp) -> Result<Match
                                     scale});
     return Ok(Match{rstd::move(pattern), scale});
 }
+struct OutlineGeometry final : dw::RefCounted<dw::IDWriteGeometrySink, OutlineGeometry> {
+    GlyphOutlineBuilder path;
+
+    void __stdcall SetFillMode(dw::D2D1_FILL_MODE) override {}
+    void __stdcall SetSegmentFlags(dw::D2D1_PATH_SEGMENT) override {}
+    void __stdcall BeginFigure(dw::D2D1_POINT_2F start, dw::D2D1_FIGURE_BEGIN) override {
+        path.move({start.x, start.y});
+    }
+    void __stdcall AddLines(const dw::D2D1_POINT_2F *points, dw::UINT32 count) override {
+        for (dw::UINT32 i{}; i < count; ++i) path.line({points[i].x, points[i].y});
+    }
+    void __stdcall AddBeziers(const dw::D2D1_BEZIER_SEGMENT *curves, dw::UINT32 count) override {
+        for (dw::UINT32 i{}; i < count; ++i) {
+            const auto &curve = curves[i];
+            path.cubic({curve.point1.x, curve.point1.y}, {curve.point2.x, curve.point2.y},
+                       {curve.point3.x, curve.point3.y});
+        }
+    }
+    void __stdcall EndFigure(dw::D2D1_FIGURE_END) override { path.close(); }
+    dw::HRESULT __stdcall Close() override { return dw::success; }
+};
 struct Face {
     Option<Arc<Context>> context;
     Option<Arc<MemoryLoader>> loader;
@@ -307,6 +328,20 @@ struct Face {
                  factor,
              (Scalar(metrics.advanceHeight) - metrics.topSideBearing - metrics.bottomSideBearing) *
                  factor}});
+    }
+    auto outline(Index index) -> Result<GlyphOutline, TextError> {
+        if (index >= font->GetGlyphCount()) return Err(TextError::InvalidIndex);
+        auto glyph = static_cast<unsigned short>(index);
+        dw::Owned<OutlineGeometry> sink(new OutlineGeometry);
+        if (font->GetGlyphRunOutline(static_cast<float>(size), &glyph, nullptr, nullptr,
+                                     1, false, false, sink.get()) < 0)
+            return Err(TextError::Unsupported);
+        if (sink->path.outline.commands.is_empty()) {
+            auto metrics = measure(index);
+            if (metrics.is_err()) return Err(metrics.unwrap_err());
+            if (metrics->ink.width > 0 && metrics->ink.height > 0) return Err(TextError::Unsupported);
+        }
+        return sink->path.finish();
     }
     auto rasterize(Index index, Scalar scale) -> Result<GlyphBitmap, TextError> {
         if (index >= font->GetGlyphCount())
