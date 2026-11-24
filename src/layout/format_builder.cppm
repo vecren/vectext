@@ -90,6 +90,14 @@ class TextFormatBuilder {
         line_metrics(value);
         return rstd::move(*this);
     }
+    auto line_advance(TextLineAdvance value) & -> TextFormatBuilder & {
+        value_.line_advance = value;
+        return *this;
+    }
+    auto line_advance(TextLineAdvance value) && -> TextFormatBuilder {
+        line_advance(value);
+        return rstd::move(*this);
+    }
     auto character_spacing(Scalar value) & -> TextFormatBuilder & {
         value_.character_spacing = rstd::move(value);
         return *this;

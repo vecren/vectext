@@ -53,6 +53,7 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
     format.character_spacing = request.character_spacing;
     format.spacing = request.spacing;
     format.line_metrics = request.line_metrics;
+    format.line_advance = request.line_advance;
     if (request.overflow < TextOverflow::Clip || request.overflow > TextOverflow::Ellipsis ||
         request.tabs < TextTabs::Stops || request.tabs > TextTabs::Ignore ||
         request.whitespace < TextWhitespace::Preserve ||
@@ -326,6 +327,7 @@ auto build_prepared(Collection &collection,TextRequest request,const PreparedTex
         width = 0;
         auto &first = result.fonts[usize()];
         Scalar ascent = first->ascent, descent = first->descent, height = first->height;
+        Scalar object_ascent{}, object_descent{};
         for (usize i{}; i < visible.len(); ++i) {
             auto &c = visible[i];
             auto delta = advance(c, width, i + usize(1) < visible.len());
@@ -333,8 +335,8 @@ auto build_prepared(Collection &collection,TextRequest request,const PreparedTex
             if (delta < 0) return Err(TextError::Unsupported);
             width += delta;
             if (c.object != ~Index{}) {
-                if (c.ascent > ascent) ascent = c.ascent;
-                if (c.descent > descent) descent = c.descent;
+                object_ascent = rstd::cmp::max(object_ascent, c.ascent);
+                object_descent = rstd::cmp::max(object_descent, c.descent);
                 continue;
             }
             if (request.line_metrics == TextLineMetrics::PrimaryFont) continue;
@@ -346,8 +348,16 @@ auto build_prepared(Collection &collection,TextRequest request,const PreparedTex
             if (font->height > height)
                 height = font->height;
         }
+        const bool object_expands = object_ascent > ascent || object_descent > descent;
+        ascent = rstd::cmp::max(ascent, object_ascent);
+        descent = rstd::cmp::max(descent, object_descent);
+        // Font leading can be negative; keep line bounds independent of baseline advance.
+        const Scalar font_height = height;
         if (height < ascent + descent)
             height = ascent + descent;
+        const Scalar line_advance =
+            request.line_advance == TextLineAdvance::FontHeight && !object_expands ? font_height
+                                                                                   : height;
         Scalar x{};
         if (request.width.is_some()) {
             auto extra = *request.width - width;
@@ -415,8 +425,11 @@ auto build_prepared(Collection &collection,TextRequest request,const PreparedTex
         if (!clipped && end < chars.len() && chars[end].newline &&
             chars[end].end - chars[end].begin == 2)
             query->stops.push(Stop{chars[end].begin + 1, x + width});
+        auto bottom = y + height;
+        if (!query->lines.is_empty())
+            bottom = rstd::cmp::max(bottom, query->lines.last().unwrap()->maximum_bottom);
         query->lines.push(QueryLine{line.logical, stop_start,
-                                    static_cast<Index>(query->stops.len().to_primitive())});
+                                    static_cast<Index>(query->stops.len().to_primitive()), bottom});
         unite(result.data.ink, line.ink);
         if (result.data.lines.is_empty()) {
             result.data.logical = line.logical;
@@ -426,10 +439,10 @@ auto build_prepared(Collection &collection,TextRequest request,const PreparedTex
             auto right = result.data.logical.x + result.data.logical.width > x + width
                              ? result.data.logical.x + result.data.logical.width
                              : x + width;
-            result.data.logical = {left, 0, right - left, y + height};
+            result.data.logical = {left, 0, right - left, bottom};
         }
         result.data.lines.push(rstd::move(line));
-        y += height + request.line_spacing;
+        y += line_advance + request.line_spacing;
         if (!finite(y) || y > 1048576 || width > 1048576)
             return Err(TextError::Limit);
         end = next_start;

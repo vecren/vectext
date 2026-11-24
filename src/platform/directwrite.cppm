@@ -430,8 +430,7 @@ auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits li
     face.units = metrics.designUnitsPerEm;
     face.ascent = metrics.ascent * size / face.units;
     face.descent = metrics.descent * size / face.units;
-    face.height = face.ascent + face.descent +
-                  (metrics.lineGap > 0 ? metrics.lineGap * size / face.units : 0);
+    face.height = face.ascent + face.descent + metrics.lineGap * size / face.units;
     return Ok(empty{});
 }
 } // namespace vectext::directwrite

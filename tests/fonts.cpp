@@ -7,6 +7,91 @@ using namespace vectext::tests;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace vectext;
+TEST(VectextFonts, FontHeightAdvancePreservesNegativeLeadingAndFullBounds) {
+    auto collection = FontCollection::create({.system_fonts = false}).unwrap();
+    auto bytes = font_data("DejaVuSans.ttf"_str);
+    auto primary =
+        collection.register_font(bytes.as_slice(), 0, Some(FontMetrics{.8, .25, 1})).unwrap();
+    SystemTextService service(collection);
+    TextRequest request{.text = "Ag\nAg\nAg"_str, .size = 40, .source = Some(primary)};
+    auto original = service.layout(request).unwrap();
+    EXPECT_EQ(original.lines()[usize()].logical.height, 42.);
+    EXPECT_EQ(original.lines()[usize(1)].baseline - original.lines()[usize()].baseline, 42.);
+    EXPECT_EQ(original.typographic_bounds().height, 126.);
+
+    request.line_advance = TextLineAdvance::FontHeight;
+    auto compact = service.layout(request).unwrap();
+    EXPECT_EQ(compact.lines()[usize()].logical.height, 42.);
+    EXPECT_EQ(compact.lines()[usize(1)].baseline - compact.lines()[usize()].baseline, 40.);
+    EXPECT_EQ(compact.lines()[usize(2)].baseline - compact.lines()[usize(1)].baseline, 40.);
+    EXPECT_EQ(compact.typographic_bounds().height, 122.);
+    EXPECT_EQ(compact.logical_bounds().height, 122.);
+    EXPECT_EQ(compact.lines()[usize(2)].baseline + compact.lines()[usize(2)].descent, 122.);
+    EXPECT_EQ(compact.caret(6).unwrap().bounds.y, 80.);
+    EXPECT_EQ(compact.caret(6).unwrap().bounds.height, 42.);
+    EXPECT_EQ(compact.hit({0, 90}).unwrap().byte_index, 6u);
+    auto boxes = compact.range_boxes({3, 5}).unwrap();
+    ASSERT_EQ(boxes.len(), usize(1));
+    EXPECT_EQ(boxes[usize()].bounds.y, 40.);
+    EXPECT_EQ(boxes[usize()].bounds.height, 42.);
+
+    request.line_spacing = 3;
+    auto spaced = service.layout(request).unwrap();
+    EXPECT_EQ(spaced.lines()[usize(1)].baseline - spaced.lines()[usize()].baseline, 43.);
+    EXPECT_EQ(spaced.typographic_bounds().height, 128.);
+    request.text = "Ag"_str;
+    auto single = service.layout(request).unwrap();
+    EXPECT_EQ(single.typographic_bounds().height, 42.);
+    EXPECT_EQ(single.baseline(), original.baseline());
+    request.line_advance = TextLineAdvance(99);
+    EXPECT_EQ(service.layout(request).unwrap_err(), TextError::InvalidValue);
+}
+
+TEST(VectextFonts, FontHeightAdvanceStillExpandsForInlineObjects) {
+    auto collection = FontCollection::create({.system_fonts = false}).unwrap();
+    auto bytes = font_data("DejaVuSans.ttf"_str);
+    auto primary =
+        collection.register_font(bytes.as_slice(), 0, Some(FontMetrics{.8, .25, 1})).unwrap();
+    SystemTextService service(collection);
+    TextRequest request{.text = "A\uFFFC\nA"_str,
+                        .size = 40,
+                        .source = Some(primary),
+                        .line_metrics = TextLineMetrics::PrimaryFont,
+                        .line_advance = TextLineAdvance::FontHeight};
+    for (auto ascent : {20., 35., 80.}) {
+        TextInlineObject object{{1, 4}, 10, ascent, 0, {0, -ascent, 10, ascent}};
+        request.inline_objects =
+            TextInlineObjects::create(request.text,
+                                      slice<TextInlineObject>::from_raw_parts(&object, usize(1)))
+                .unwrap();
+        auto layout = service.layout(request).unwrap();
+        const auto expected = ascent <= 32 ? 40 : ascent + 10;
+        EXPECT_EQ(layout.lines()[usize(1)].logical.y, expected);
+        EXPECT_EQ(layout.lines()[usize()].ascent, rstd::cmp::max(32., ascent));
+        EXPECT_EQ(layout.lines()[usize()].descent, 10.);
+    }
+}
+
+TEST(VectextFonts, FontHeightAdvanceKeepsOverlappingLineBoundsAndQueries) {
+    auto collection = FontCollection::create({.system_fonts = false}).unwrap();
+    auto latin = font_data("DejaVuSans.ttf"_str), cjk = font_data("NotoSansCJK-subset.ttf"_str);
+    auto primary =
+        collection.register_font(latin.as_slice(), 0, Some(FontMetrics{.8, .25, 1})).unwrap();
+    collection.register_font(cjk.as_slice(), 0, Some(FontMetrics{2, 1, .1})).unwrap();
+    SystemTextService service(collection);
+    auto layout = service
+                      .layout({.text = "中\nA"_str,
+                               .size = 20,
+                               .source = Some(primary),
+                               .line_advance = TextLineAdvance::FontHeight})
+                      .unwrap();
+    EXPECT_EQ(layout.lines()[usize()].logical.height, 60.);
+    EXPECT_EQ(layout.lines()[usize(1)].logical.y, 20.);
+    EXPECT_EQ(layout.logical_bounds().height, 60.);
+    EXPECT_EQ(layout.typographic_bounds().height, 60.);
+    EXPECT_EQ(layout.hit({0, 50}).unwrap().byte_index, 0u);
+}
+
 TEST(VectextFonts, PrimaryLineMetricsKeepFallbackGlyphsWithoutExpandingLines) {
     auto collection = FontCollection::create({.system_fonts = false}).unwrap();
     auto latin = font_data("DejaVuSans.ttf"_str);
@@ -19,6 +104,7 @@ TEST(VectextFonts, PrimaryLineMetricsKeepFallbackGlyphsWithoutExpandingLines) {
     auto expanded = service.layout(request).unwrap();
     EXPECT_EQ(expanded.lines()[usize()].logical.height, 60.);
     request.line_metrics = TextLineMetrics::PrimaryFont;
+    request.line_advance = TextLineAdvance::FontHeight;
     auto fixed = service.layout(request).unwrap();
     EXPECT_EQ(fixed.lines()[usize()].logical.height, 20.);
     EXPECT_EQ(fixed.lines()[usize(1)].baseline - fixed.lines()[usize()].baseline, 20.);

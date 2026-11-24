@@ -10,6 +10,8 @@ struct Stop {
 struct QueryLine {
     Rect bounds;
     Index start, end;
+    // Overlapping line boxes can have non-monotonic bottom edges.
+    Scalar maximum_bottom;
 };
 struct Queries final : TextQueries {
     Option<Index> hidden;
@@ -19,7 +21,7 @@ struct Queries final : TextQueries {
         usize low{}, high = lines.len();
         while (low < high) {
             auto mid = (low + high) / usize(2);
-            if (lines[mid].bounds.y + lines[mid].bounds.height <= p.y)
+            if (lines[mid].maximum_bottom <= p.y)
                 low = mid + usize(1);
             else
                 high = mid;

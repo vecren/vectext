@@ -68,8 +68,6 @@ struct Face {
         ascent = face->size->metrics.ascender / 64.0;
         descent = -face->size->metrics.descender / 64.0;
         height = face->size->metrics.height / 64.0;
-        if (height < ascent + descent)
-            height = ascent + descent;
         if (height <= 0)
             return Err(TextError::Font);
         return Ok(empty{});

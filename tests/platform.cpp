@@ -8,6 +8,26 @@ using namespace vectext::tests;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
+#if !__is_target_os(macos) && !__is_target_os(windows)
+TEST(VectextFreeType, FontHeightAdvanceRetainsNativeNegativeLeading) {
+    auto collection = FontCollection::create({.system_fonts = false}).unwrap();
+    auto bytes = font_data("DejaVuSans.ttf"_str);
+    auto source = collection.register_font(bytes.as_slice()).unwrap();
+    SystemTextService service(collection);
+    TextRequest request{.text = "Ag\nAg\nAg"_str, .size = 10, .source = Some(source)};
+    auto original = service.layout(request).unwrap();
+    EXPECT_EQ(original.lines()[usize()].ascent, 10.);
+    EXPECT_EQ(original.lines()[usize()].descent, 3.);
+    EXPECT_EQ(original.lines()[usize(1)].baseline - original.baseline(), 13.);
+    EXPECT_EQ(original.typographic_bounds().height, 39.);
+    request.line_advance = TextLineAdvance::FontHeight;
+    auto compact = service.layout(request).unwrap();
+    EXPECT_EQ(compact.lines()[usize(1)].baseline - compact.baseline(), 12.);
+    EXPECT_EQ(compact.lines()[usize()].logical.height, 13.);
+    EXPECT_EQ(compact.typographic_bounds().height, 37.);
+}
+#endif
+
 TEST(VectextPlatform, CollectionFacesAndOwnedInput) {
     auto collection = FontCollection::create({.system_fonts = false}).unwrap();
     FontSource regular, bold;

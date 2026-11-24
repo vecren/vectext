@@ -309,8 +309,6 @@ auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits li
     face.ascent = ct::CTFontGetAscent(face.font.get());
     face.descent = ct::CTFontGetDescent(face.font.get());
     face.height = face.ascent + face.descent + ct::CTFontGetLeading(face.font.get());
-    if (face.height < face.ascent + face.descent)
-        face.height = face.ascent + face.descent;
     return Ok(empty{});
 }
 } // namespace vectext::coretext

@@ -24,6 +24,7 @@ TEST(TextFormatBuilder, PreparedResultsAndExternalStringsSurviveTheBuilder) {
                            .size(20)
                            .source(Some(FontSource{4, 9}))
                            .line_metrics(TextLineMetrics::PrimaryFont)
+                           .line_advance(TextLineAdvance::FontHeight)
                            .line_breaks(rstd::move(breaks));
         static_assert(__is_same(decltype(builder.bold(true)), TextFormatBuilder &));
         first = builder.build();
@@ -44,6 +45,9 @@ TEST(TextFormatBuilder, PreparedResultsAndExternalStringsSurviveTheBuilder) {
     EXPECT_EQ(first.line_breaks, second.line_breaks);
     EXPECT_EQ(first.line_metrics, TextLineMetrics::PrimaryFont);
     EXPECT_EQ(second.line_metrics, TextLineMetrics::PrimaryFont);
+    EXPECT_EQ(first.line_advance, TextLineAdvance::FontHeight);
+    EXPECT_EQ(second.line_advance, TextLineAdvance::FontHeight);
+    EXPECT_EQ(TextFormatBuilder{}.build().line_advance, TextLineAdvance::LineBox);
 }
 
 TEST(TextFormatBuilder, FinalValuesCanBeRepairedAndOptionalSettingsCleared) {
