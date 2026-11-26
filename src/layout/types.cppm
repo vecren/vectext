@@ -49,6 +49,22 @@ struct FontSource {
     Serial collection{}, source{};
     friend auto operator==(const FontSource &, const FontSource &) -> bool = default;
 };
+constexpr auto font_axis_tag(char a, char b, char c, char d) -> Index {
+    return (Index(static_cast<unsigned char>(a)) << 24) |
+           (Index(static_cast<unsigned char>(b)) << 16) |
+           (Index(static_cast<unsigned char>(c)) << 8) |
+           Index(static_cast<unsigned char>(d));
+}
+struct FontAxis {
+    Index tag{};
+    Scalar minimum{}, default_value{}, maximum{};
+    friend auto operator==(const FontAxis &, const FontAxis &) -> bool = default;
+};
+struct FontVariation {
+    Index tag{};
+    Scalar value{};
+    friend auto operator==(const FontVariation &, const FontVariation &) -> bool = default;
+};
 enum class TextOverflow { Clip, ThreeDots, Ellipsis };
 enum class TextTabs { Stops, Ignore };
 enum class TextWhitespace { Preserve, TrimWrap };
@@ -247,6 +263,8 @@ struct TextRequest {
     TextLineBreaks line_breaks;
     TextLineMetrics line_metrics{TextLineMetrics::AllFonts};
     TextLineAdvance line_advance{TextLineAdvance::LineBox};
+    // Design coordinates apply to the explicitly selected font source.
+    slice<FontVariation> variations;
 };
 struct TextFormat {
     ref<str> family{"sans"_str}, language{"und"_str};

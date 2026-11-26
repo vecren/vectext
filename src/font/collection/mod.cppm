@@ -68,11 +68,15 @@ struct FontResolver {
     }
 };
 auto resolver(Collection &collection, TextRequest request) -> Result<FontResolver, TextError> {
+    if (!request.variations.is_empty() &&
+        (request.source.is_none() || collection.registered(*request.source).is_none()))
+        return Err(TextError::InvalidValue);
     auto matched = candidates(collection, request);
     if (matched.is_err())
         return Err(matched.unwrap_err());
     auto choices = rstd::move(matched).unwrap();
-    auto primary = candidate_font(collection, choices[usize()], request.size,request.bold);
+    auto primary = candidate_font(collection, choices[usize()], request.size, request.bold,
+                                  request.variations);
     if (primary.is_err())
         return Err(primary.unwrap_err());
     return Ok(FontResolver{rstd::move(choices), rstd::move(primary).unwrap(), request});

@@ -70,6 +70,15 @@ auto FontCollection::register_font(slice<unsigned char> bytes, Index face_index,
     state.counters.revision = new_identity();
     return Ok(FontSource{state.id, source->id});
 }
+auto FontCollection::axes(FontSource handle) const -> Result<Vec<FontAxis>, TextError> {
+    auto &state = impl_->state;
+    auto guard = state.mutex.lock().unwrap();
+    auto source = state.registered(handle);
+    if (source.is_none()) return Err(TextError::InvalidValue);
+    auto result = (*source)->axes();
+    if (result.is_err()) return Err(result.unwrap_err());
+    return Ok(Vec<FontAxis>::from(result.unwrap()));
+}
 auto FontCollection::refresh() -> Result<empty, TextError> {
     auto &state = impl_->state;
     auto guard = state.mutex.lock().unwrap();

@@ -299,9 +299,56 @@ struct Face {
 };
 auto source_bytes(const SourceData &source) -> Serial { return source.bytes.len().to_primitive(); }
 auto source_bold(const SourceData &source) -> bool { return source.traits & ct::kCTFontBoldTrait; }
-auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits)
+auto source_axes(const SourceData &source) -> Result<Vec<FontAxis>, TextError> {
+    NativeFont font(ct::CTFontCreateWithFontDescriptor(source.pattern.get(), 16, nullptr));
+    if (!font) return Err(TextError::Font);
+    Owned<cf::CFArrayRef> axes(ct::CTFontCopyVariationAxes(font.get()));
+    Vec<FontAxis> result;
+    if (!axes) return Ok(rstd::move(result));
+    auto count = cf::CFArrayGetCount(axes.get());
+    if (count > 4096) return Err(TextError::Limit);
+    Owned<cf::CFDictionaryRef> selected(ct::CTFontCopyVariation(font.get()));
+    for (cf::CFIndex i{}; i < count; ++i) {
+        auto item = static_cast<cf::CFDictionaryRef>(cf::CFArrayGetValueAtIndex(axes.get(), i));
+        if (!item) return Err(TextError::Font);
+        auto identifier = static_cast<cf::CFNumberRef>(
+            cf::CFDictionaryGetValue(item, ct::kCTFontVariationAxisIdentifierKey));
+        rstd::int64_t tag{};
+        if (!identifier || !cf::CFNumberGetValue(identifier, cf::kCFNumberSInt64Type, &tag) ||
+            tag < 0 || tag > ~Index{})
+            return Err(TextError::Font);
+        FontAxis axis{Index(tag)};
+        auto read = [&](cf::CFStringRef key, double &value) {
+            auto number = static_cast<cf::CFNumberRef>(cf::CFDictionaryGetValue(item, key));
+            return number && cf::CFNumberGetValue(number, cf::kCFNumberDoubleType, &value);
+        };
+        if (!read(ct::kCTFontVariationAxisMinimumValueKey, axis.minimum) ||
+            !read(ct::kCTFontVariationAxisMaximumValueKey, axis.maximum) ||
+            !read(ct::kCTFontVariationAxisDefaultValueKey, axis.default_value))
+            return Err(TextError::Font);
+        if (selected) {
+            auto current = static_cast<cf::CFNumberRef>(cf::CFDictionaryGetValue(selected.get(), identifier));
+            if (current && !cf::CFNumberGetValue(current, cf::kCFNumberDoubleType, &axis.default_value))
+                return Err(TextError::Font);
+        }
+        result.push(FontAxis(axis));
+    }
+    return Ok(rstd::move(result));
+}
+auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits,
+                slice<FontVariation> variations)
     -> Result<empty, TextError> {
-    face.font.reset(ct::CTFontCreateWithFontDescriptor(source.pattern.get(), size, nullptr));
+    auto descriptor = retain(source.pattern.get());
+    for (auto coordinate : variations) {
+        const auto tag = rstd::int64_t(coordinate.tag);
+        Owned<cf::CFNumberRef> identifier(
+            cf::CFNumberCreate(cf::kCFAllocatorDefault, cf::kCFNumberSInt64Type, &tag));
+        if (!identifier) return Err(TextError::Font);
+        descriptor.reset(ct::CTFontDescriptorCreateCopyWithVariation(descriptor.get(),
+                                                                      identifier.get(), coordinate.value));
+        if (!descriptor) return Err(TextError::Font);
+    }
+    face.font.reset(ct::CTFontCreateWithFontDescriptor(descriptor.get(), size, nullptr));
     if (!face.font)
         return Err(TextError::Font);
     face.size = size;

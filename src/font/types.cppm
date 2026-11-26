@@ -41,6 +41,7 @@ class FontCollection {
     ~FontCollection();
     auto register_font(slice<unsigned char> bytes, Index face_index = 0, Option<FontMetrics> metrics = {})
         -> Result<FontSource, TextError>;
+    auto axes(FontSource source) const -> Result<Vec<FontAxis>, TextError>;
     auto add_font(slice<unsigned char> bytes, Index face_index = 0) -> Result<empty, TextError>;
     auto refresh() -> Result<empty, TextError>;
     void clear_cache();

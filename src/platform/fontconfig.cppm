@@ -64,8 +64,12 @@ auto source_bold(const SourceData &source) -> bool {
     int weight{};
     return fc::FcPatternGetInteger(source.pattern.get(),fc::FC_WEIGHT,0,&weight)==fc::FcResultMatch && weight>=fc::FC_WEIGHT_BOLD;
 }
-auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits)
+auto source_axes(const SourceData &source) -> Result<Vec<FontAxis>, TextError> {
+    return freetype::axes(source.bytes.as_slice(), source.index);
+}
+auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits,
+                slice<FontVariation> variations)
     -> Result<empty, TextError> {
-    return face.initialize(source.bytes.as_slice(), source.index, size, limits);
+    return face.initialize(source.bytes.as_slice(), source.index, size, limits, variations);
 }
 } // namespace vectext::fontconfig

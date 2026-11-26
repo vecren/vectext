@@ -17,7 +17,7 @@ auto copy_pattern(const Pattern &pattern) -> Pattern {
     Pattern result{String::make(pattern.path.as_str()), pattern.index, pattern.weight,
                    pattern.italic};
     for (auto axis : pattern.axes)
-        result.axes.push(Axis(axis));
+        result.axes.push(FontVariation(axis));
     return result;
 }
 
@@ -108,41 +108,13 @@ auto source_bold(const SourceData &source) -> bool {
     return source.bold || source.pattern.weight >= 600;
 }
 
-auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits)
-    -> Result<empty, TextError> {
-    auto loaded = face.initialize(source.bytes.as_slice(), source.index, size, limits);
-    if (loaded.is_err() || source.pattern.axes.is_empty())
-        return loaded;
-    ft::FT_MM_Var *description{};
-    if (ft::FT_Get_MM_Var(face.face.get(), &description) || !description)
-        return Err(TextError::Font);
-    struct AxesOwner {
-        ft::FT_Library library;
-        ft::FT_MM_Var *description;
-        ~AxesOwner() { ft::FT_Done_MM_Var(library, description); }
-    } owner{face.library.get(), description};
-    if (description->num_axis > 4096)
-        return Err(TextError::Limit);
-    Vec<ft::FT_Fixed> values;
-    for (unsigned i{}; i < description->num_axis; ++i) {
-        auto value = description->axis[i].def;
-        for (auto axis : source.pattern.axes) {
-            if (axis.tag != description->axis[i].tag)
-                continue;
-            auto fixed = axis.value * 65536;
-            if (!finite(fixed) || fixed < Scalar(description->axis[i].minimum) ||
-                fixed > Scalar(description->axis[i].maximum))
-                return Err(TextError::Font);
-            value = static_cast<ft::FT_Fixed>(fixed);
-        }
-        values.push(ft::FT_Fixed(value));
-    }
-    if (ft::FT_Set_Var_Design_Coordinates(face.face.get(), values.len().to_primitive(),
-                                          values.as_mut_slice().as_raw_ptr()))
-        return Err(TextError::Font);
-    auto scaled = face.set_size(1);
-    if (scaled.is_err())
-        return scaled;
-    return face.refresh_metrics();
+auto source_axes(const SourceData &source) -> Result<Vec<FontAxis>, TextError> {
+    return freetype::axes(source.bytes.as_slice(), source.index);
+}
+
+auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits,
+                slice<FontVariation> variations) -> Result<empty, TextError> {
+    auto coordinates = variations.is_empty() ? source.pattern.axes.as_slice() : variations;
+    return face.initialize(source.bytes.as_slice(), source.index, size, limits, coordinates);
 }
 } // namespace vectext::android

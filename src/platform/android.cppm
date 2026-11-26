@@ -8,17 +8,12 @@ using namespace rstd::prelude;
 struct Config {
     bool system{};
 };
-struct Axis {
-    Index tag{};
-    Scalar value{};
-    auto operator==(const Axis &) const -> bool = default;
-};
 struct Pattern {
     String path;
     Index index{};
     rstd::uint16_t weight{};
     bool italic{};
-    Vec<Axis> axes;
+    Vec<FontVariation> axes;
 };
 struct SourceData {
     Vec<u8> bytes;
@@ -37,6 +32,8 @@ auto copy_pattern(const Pattern &pattern) -> Pattern;
 auto same_pattern(const Pattern &a, const Pattern &b) -> bool;
 auto source_bytes(const SourceData &source) -> Serial;
 auto source_bold(const SourceData &source) -> bool;
-auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits)
+auto source_axes(const SourceData &source) -> Result<Vec<FontAxis>, TextError>;
+auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits,
+                slice<FontVariation> variations)
     -> Result<empty, TextError>;
 } // namespace vectext::android

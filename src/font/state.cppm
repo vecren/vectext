@@ -17,8 +17,46 @@ struct Source {
     String path;
     bool application{};
     Option<FontMetrics> metrics;
+    Option<Vec<FontAxis>> variation_axes;
     Source(platform::SourceData data, String path, bool application)
         : data(rstd::move(data)), path(rstd::move(path)), application(application) {}
+
+    auto axes() -> Result<slice<FontAxis>, TextError> {
+        if (variation_axes.is_none()) {
+            auto loaded = platform::source_axes(data);
+            if (loaded.is_err()) return Err(loaded.unwrap_err());
+            auto described = rstd::move(loaded).unwrap();
+            for (auto axis : described)
+                if (!finite(axis.minimum) || !finite(axis.default_value) || !finite(axis.maximum) ||
+                    axis.default_value < axis.minimum || axis.default_value > axis.maximum)
+                    return Err(TextError::Font);
+            variation_axes = Some(rstd::move(described));
+        }
+        return Ok(variation_axes->as_slice());
+    }
+    auto coordinates(slice<FontVariation> requested) -> Result<Vec<FontVariation>, TextError> {
+        Vec<FontVariation> canonical;
+        if (requested.is_empty()) return Ok(rstd::move(canonical));
+        auto described = axes();
+        if (described.is_err()) return Err(described.unwrap_err());
+        auto available = described.unwrap();
+        if (requested.len() > available.len()) return Err(TextError::InvalidValue);
+        usize matched{};
+        for (auto axis : available) {
+            bool found{};
+            for (auto coordinate : requested) {
+                if (coordinate.tag != axis.tag) continue;
+                if (found || !finite(coordinate.value) || coordinate.value < axis.minimum ||
+                    coordinate.value > axis.maximum)
+                    return Err(TextError::InvalidValue);
+                found = true;
+                ++matched;
+                if (coordinate.value != axis.default_value) canonical.push(FontVariation(coordinate));
+            }
+        }
+        if (matched != requested.len()) return Err(TextError::InvalidValue);
+        return Ok(rstd::move(canonical));
+    }
 };
 struct Font {
     Arc<Source> source;
@@ -27,11 +65,15 @@ struct Font {
     bool embolden{};
     Serial id{new_identity()}, revision{};
     TextLimits limits;
+    Vec<FontVariation> variations;
     rstd::sync::Mutex<empty> mutex;
-    Font(Arc<Source> source, Scalar size, Serial revision, TextLimits limits, bool embolden)
-        : source(rstd::move(source)), size(size), embolden(embolden), revision(revision), limits(limits) {}
+    Font(Arc<Source> source, Scalar size, Serial revision, TextLimits limits, bool embolden,
+         Vec<FontVariation> variations)
+        : source(rstd::move(source)), size(size), embolden(embolden), revision(revision),
+          limits(limits), variations(rstd::move(variations)) {}
     auto initialize() -> Result<empty, TextError> {
-        auto result = platform::initialize(native, source->data, size == 0 ? Scalar(1) : size, limits);
+        auto result = platform::initialize(native, source->data, size == 0 ? Scalar(1) : size, limits,
+                                           variations.as_slice());
         if (result.is_err())
             return result;
         // A zero logical font keeps a native face for glyph identity and fallback.
@@ -128,7 +170,17 @@ struct Collection {
     auto make_config() -> Result<platform::Config, TextError> {
         return platform::make_config(system, config_path.as_str());
     }
-    auto font(Arc<Source> source, Scalar size, bool embolden=false) -> Result<Arc<Font>, TextError> {
+    auto registered(FontSource handle) -> Option<Arc<Source>> {
+        if (handle.collection == id)
+            for (auto &source : sources)
+                if (source->application && source->id == handle.source) return Some(source.clone());
+        return None();
+    }
+    auto font(Arc<Source> source, Scalar size, bool embolden = false,
+              slice<FontVariation> requested = {}) -> Result<Arc<Font>, TextError> {
+        auto normalized = source->coordinates(requested);
+        if (normalized.is_err()) return Err(normalized.unwrap_err());
+        auto variations = rstd::move(normalized).unwrap();
         Serial alive{};
         for (usize i{}; i < instances.len();) {
             auto instance = instances[i].upgrade();
@@ -138,7 +190,8 @@ struct Collection {
             }
             ++alive;
             if (instance->revision == counters.revision && instance->size == size && instance->embolden == embolden &&
-                Arc<Source>::ptr_eq(instance->source, source)) {
+                Arc<Source>::ptr_eq(instance->source, source) &&
+                instance->variations.as_slice() == variations.as_slice()) {
                 ++counters.font_hits;
                 return Ok(rstd::move(instance));
             }
@@ -153,7 +206,8 @@ struct Collection {
             if (alive >= limits.font_instances)
                 return Err(TextError::Limit);
         }
-        auto result = Arc<Font>::make(rstd::move(source), size, counters.revision, limits,embolden);
+        auto result = Arc<Font>::make(rstd::move(source), size, counters.revision, limits, embolden,
+                                      rstd::move(variations));
         auto status = result->initialize();
         if (status.is_err())
             return Err(status.unwrap_err());

@@ -4,9 +4,7 @@ module;
 #include FT_FREETYPE_H
 #include FT_COLOR_H
 #include FT_OUTLINE_H
-#if __is_target_environment(android)
 #include FT_MULTIPLE_MASTERS_H
-#endif
 namespace vectext_freetype_constants {
 inline constexpr auto k_FT_LOAD_NO_BITMAP = FT_LOAD_NO_BITMAP;
 inline constexpr auto k_FT_LOAD_NO_HINTING = FT_LOAD_NO_HINTING;
@@ -47,6 +45,7 @@ inline constexpr auto FT_LOAD_NO_HINTING = vectext_freetype_constants::k_FT_LOAD
 inline constexpr auto FT_STYLE_FLAG_BOLD = vectext_freetype_constants::k_FT_STYLE_FLAG_BOLD;
 inline constexpr auto FT_STYLE_FLAG_ITALIC = vectext_freetype_constants::k_FT_STYLE_FLAG_ITALIC;
 inline bool is_scalable(FT_Face face) { return FT_IS_SCALABLE(face); }
+inline bool has_variations(FT_Face face) { return FT_HAS_MULTIPLE_MASTERS(face); }
 
 using ::FT_COLOR_NO_ROOT_TRANSFORM;
 using ::FT_Get_Char_Index;
@@ -58,11 +57,10 @@ using ::FT_UInt;
 using ::FT_Vector;
 using Library = Owner<FT_LibraryRec_, FT_Done_FreeType>;
 using Face = Owner<FT_FaceRec_, FT_Done_Face>;
-#if __is_target_environment(android)
 using ::FT_Done_MM_Var;
 using ::FT_Fixed;
 using ::FT_Get_MM_Var;
+using ::FT_Get_Var_Design_Coordinates;
 using ::FT_MM_Var;
 using ::FT_Set_Var_Design_Coordinates;
-#endif
 } // namespace vectext::ffi::freetype

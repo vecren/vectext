@@ -7,6 +7,76 @@ import vectext.ffi.freetype;
 using namespace rstd::prelude;
 namespace vectext::freetype {
 namespace ft = ffi::freetype;
+struct VariationDescription {
+    ft::FT_Library library;
+    ft::FT_MM_Var *data{};
+    explicit VariationDescription(ft::FT_Library library) : library(library) {}
+    VariationDescription(const VariationDescription &) = delete;
+    auto operator=(const VariationDescription &) -> VariationDescription & = delete;
+    ~VariationDescription() { if (data) ft::FT_Done_MM_Var(library, data); }
+    auto resolve(ft::FT_Face face) -> Result<Vec<ft::FT_Fixed>, TextError> {
+        if (ft::FT_Get_MM_Var(face, &data) || !data)
+            return Err(TextError::Font);
+        if (data->num_axis > 4096) return Err(TextError::Limit);
+        Vec<ft::FT_Fixed> values;
+        values.resize(usize(data->num_axis), ft::FT_Fixed{});
+        if (ft::FT_Get_Var_Design_Coordinates(face, data->num_axis, values.as_mut_slice().as_raw_ptr()))
+            return Err(TextError::Font);
+        return Ok(rstd::move(values));
+    }
+};
+
+auto open_face(ft::Library &library, ft::Face &face, slice<u8> bytes, Index index)
+    -> Result<empty, TextError> {
+    if (ft::FT_Init_FreeType(library.put()) ||
+        ft::FT_New_Memory_Face(library.get(), reinterpret_cast<const unsigned char *>(bytes.as_raw_ptr()),
+                               bytes.len().to_primitive(), index, face.put()) ||
+        !ft::is_scalable(face.get()) ||
+        ft::FT_Select_Charmap(face.get(), ft::FT_ENCODING_UNICODE))
+        return Err(TextError::Font);
+    return Ok(empty{});
+}
+
+auto axes(slice<u8> bytes, Index index) -> Result<Vec<FontAxis>, TextError> {
+    ft::Library library;
+    ft::Face face;
+    auto opened = open_face(library, face, bytes, index);
+    if (opened.is_err()) return Err(opened.unwrap_err());
+    Vec<FontAxis> result;
+    if (!ft::has_variations(face.get())) return Ok(rstd::move(result));
+    VariationDescription variation(library.get());
+    auto defaults = variation.resolve(face.get());
+    if (defaults.is_err()) return Err(defaults.unwrap_err());
+    for (unsigned i{}; i < variation.data->num_axis; ++i) {
+        const auto &axis = variation.data->axis[i];
+        result.push({Index(axis.tag), axis.minimum / 65536.0, (*defaults)[usize(i)] / 65536.0,
+                     axis.maximum / 65536.0});
+    }
+    return Ok(rstd::move(result));
+}
+
+auto apply_variations(ft::FT_Library library, ft::FT_Face face, slice<FontVariation> requested)
+    -> Result<empty, TextError> {
+    if (requested.is_empty()) return Ok(empty{});
+    VariationDescription variation(library);
+    auto loaded = variation.resolve(face);
+    if (loaded.is_err()) return Err(loaded.unwrap_err());
+    auto values = rstd::move(loaded).unwrap();
+    for (unsigned i{}; i < variation.data->num_axis; ++i) {
+        const auto &axis = variation.data->axis[i];
+        for (auto coordinate : requested) {
+            if (coordinate.tag != axis.tag) continue;
+            const auto fixed = coordinate.value * 65536;
+            if (!finite(fixed) || fixed < Scalar(axis.minimum) || fixed > Scalar(axis.maximum))
+                return Err(TextError::Font);
+            values[usize(i)] = static_cast<ft::FT_Fixed>(fixed);
+        }
+    }
+    if (ft::FT_Set_Var_Design_Coordinates(face, variation.data->num_axis, values.as_mut_slice().as_raw_ptr()))
+        return Err(TextError::Font);
+    return Ok(empty{});
+}
+
 auto outline_point(const ft::FT_Vector *point) -> Point { return {point->x / 64.0, -(point->y / 64.0)}; }
 auto bitmap_coverage(const ft::FT_Bitmap &bitmap, TextLimits limits)
     -> Result<Vec<unsigned char>, TextError> {
@@ -48,17 +118,15 @@ struct Face {
     ft::Face face;
     Scalar size{}, ascent{}, descent{}, height{};
     TextLimits limits;
-    auto initialize(slice<u8> bytes, Index index, Scalar pixel_size, TextLimits budget)
+    auto initialize(slice<u8> bytes, Index index, Scalar pixel_size, TextLimits budget,
+                    slice<FontVariation> variations)
         -> Result<empty, TextError> {
         size = pixel_size;
         limits = budget;
-        if (ft::FT_Init_FreeType(library.put()) ||
-            ft::FT_New_Memory_Face(library.get(),
-                                   reinterpret_cast<const unsigned char *>(bytes.as_raw_ptr()),
-                                   bytes.len().to_primitive(), index, face.put()) ||
-            !ft::is_scalable(face.get()) ||
-            ft::FT_Select_Charmap(face.get(), ft::FT_ENCODING_UNICODE))
-            return Err(TextError::Font);
+        auto opened = open_face(library, face, bytes, index);
+        if (opened.is_err()) return opened;
+        auto varied = apply_variations(library.get(), face.get(), variations);
+        if (varied.is_err()) return varied;
         auto status = set_size(1);
         if (status.is_err())
             return status;

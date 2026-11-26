@@ -73,8 +73,8 @@ auto candidates(Collection &c, TextRequest request) -> Result<Vec<Candidate>, Te
     return Ok(rstd::move(output));
 }
 
-auto candidate_font(Collection &c, Candidate &candidate, Scalar size, bool bold)
-    -> Result<Arc<Font>, TextError> {
+auto candidate_font(Collection &c, Candidate &candidate, Scalar size, bool bold,
+                    slice<FontVariation> variations) -> Result<Arc<Font>, TextError> {
     if (candidate.font.is_some())
         return Ok(candidate.font->clone());
     Option<Arc<Source>> source;
@@ -113,7 +113,8 @@ auto candidate_font(Collection &c, Candidate &candidate, Scalar size, bool bold)
             (*source)->data.pattern = android::copy_pattern(candidate.pattern);
         }
     }
-    auto loaded = c.font(source->clone(), size, bold && !platform::source_bold((*source)->data));
+    auto loaded = c.font(source->clone(), size, bold && !platform::source_bold((*source)->data),
+                         variations);
     if (loaded.is_err())
         return Err(loaded.unwrap_err());
     candidate.font = Some(rstd::move(loaded).unwrap());

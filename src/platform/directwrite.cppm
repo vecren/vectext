@@ -415,12 +415,60 @@ struct Face {
         return Ok(rstd::move(result));
     }
 };
-auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits)
+auto font_resource(const SourceData &source) -> Result<dw::Owned<dw::IDWriteFontResource>, TextError> {
+    dw::Owned<dw::IDWriteFontFace5> face;
+    if (dw::query(source.pattern.get(), face) < 0) return Err(TextError::Unsupported);
+    dw::Owned<dw::IDWriteFontResource> resource;
+    if (face->GetFontResource(resource.put()) < 0) return Err(TextError::Font);
+    return Ok(rstd::move(resource));
+}
+auto source_axes(const SourceData &source) -> Result<Vec<FontAxis>, TextError> {
+    auto loaded = font_resource(source);
+    if (loaded.is_err()) return Err(loaded.unwrap_err());
+    auto resource = rstd::move(loaded).unwrap();
+    Vec<FontAxis> result;
+    if (!resource->HasVariations()) return Ok(rstd::move(result));
+    auto count = resource->GetFontAxisCount();
+    if (count > 4096) return Err(TextError::Limit);
+    Vec<dw::DWRITE_FONT_AXIS_RANGE> ranges;
+    Vec<dw::DWRITE_FONT_AXIS_VALUE> defaults;
+    ranges.resize(usize(count), dw::DWRITE_FONT_AXIS_RANGE{});
+    defaults.resize(usize(count), dw::DWRITE_FONT_AXIS_VALUE{});
+    if (resource->GetFontAxisRanges(ranges.as_mut_slice().as_raw_ptr(), count) < 0 ||
+        resource->GetDefaultFontAxisValues(defaults.as_mut_slice().as_raw_ptr(), count) < 0)
+        return Err(TextError::Font);
+    for (unsigned i{}; i < count; ++i) {
+        if (!(resource->GetFontAxisAttributes(i) & dw::DWRITE_FONT_AXIS_ATTRIBUTES_VARIABLE)) continue;
+        auto range = ranges[usize(i)];
+        auto value = defaults[usize(i)];
+        if (range.axisTag != value.axisTag) return Err(TextError::Font);
+        result.push({__builtin_bswap32(Index(range.axisTag)), range.minValue, value.value, range.maxValue});
+    }
+    return Ok(rstd::move(result));
+}
+auto initialize(Face &face, const SourceData &source, Scalar size, TextLimits limits,
+                slice<FontVariation> variations)
     -> Result<empty, TextError> {
     face.context = Some(source.context->clone());
     if (source.loader.is_some())
         face.loader = Some(source.loader->clone());
-    face.font = dw::retain(source.pattern.get());
+    if (variations.is_empty()) {
+        face.font = dw::retain(source.pattern.get());
+    } else {
+        auto loaded = font_resource(source);
+        if (loaded.is_err()) return Err(loaded.unwrap_err());
+        auto resource = rstd::move(loaded).unwrap();
+        Vec<dw::DWRITE_FONT_AXIS_VALUE> values;
+        values.reserve(variations.len());
+        for (auto coordinate : variations)
+            values.push({static_cast<dw::DWRITE_FONT_AXIS_TAG>(__builtin_bswap32(coordinate.tag)),
+                         static_cast<float>(coordinate.value)});
+        dw::Owned<dw::IDWriteFontFace5> instance;
+        if (resource->CreateFontFace(source.pattern->GetSimulations(), values.as_slice().as_raw_ptr(),
+                                     static_cast<unsigned>(values.len().to_primitive()), instance.put()) < 0)
+            return Err(TextError::Font);
+        face.font = dw::retain(static_cast<dw::IDWriteFontFace3 *>(instance.get()));
+    }
     face.size = size;
     face.limits = limits;
     dw::DWRITE_FONT_METRICS metrics{};
