@@ -54,6 +54,8 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
     format.spacing = request.spacing;
     format.line_metrics = request.line_metrics;
     format.line_advance = request.line_advance;
+    format.line_height = request.line_height;
+    format.line_height_alignment = request.line_height_alignment;
     if (request.overflow < TextOverflow::Clip || request.overflow > TextOverflow::Ellipsis ||
         request.tabs < TextTabs::Stops || request.tabs > TextTabs::Ignore ||
         request.whitespace < TextWhitespace::Preserve ||
@@ -66,6 +68,7 @@ auto validate(TextRequest request, TextLimits limits) -> Result<empty, TextError
         (request.width.is_some() && (!finite(*request.width) || *request.width < 0)))
         return Err(TextError::InvalidValue);
     if (request.size > 16384 || request.line_spacing > 1048576 || __builtin_fabs(request.character_spacing) > 1048576 ||
+        (request.line_height.is_some() && *request.line_height > 1048576) ||
         (request.height.is_some() && *request.height>1048576) ||
         (request.width.is_some() && *request.width > 1048576))
         return Err(TextError::Limit);
@@ -175,6 +178,8 @@ auto build_prepared(Collection &collection,TextRequest request,const PreparedTex
     result.data.character_spacing = request.character_spacing;
     result.data.spacing = request.spacing;
     result.data.resolved_spacing = Some(Scalar(tracking));
+    result.data.line_height = request.line_height;
+    result.data.line_height_alignment = request.line_height_alignment;
     result.data.line_breaks=request.line_breaks;
     result.data.revision = collection.counters.revision;
     result.data.font_size=Some(Scalar(request.size));
@@ -355,9 +360,17 @@ auto build_prepared(Collection &collection,TextRequest request,const PreparedTex
         const Scalar font_height = height;
         if (height < ascent + descent)
             height = ascent + descent;
+        Scalar top_leading{};
+        if (request.line_height.is_some()) {
+            const auto target = rstd::cmp::max(height, *request.line_height);
+            const auto leading = target - height;
+            if (request.line_height_alignment == TextLineHeightAlignment::Center) top_leading = leading / 2;
+            if (request.line_height_alignment == TextLineHeightAlignment::Bottom) top_leading = leading;
+            height = target;
+        }
         const Scalar line_advance =
-            request.line_advance == TextLineAdvance::FontHeight && !object_expands ? font_height
-                                                                                   : height;
+            request.line_height.is_none() && request.line_advance == TextLineAdvance::FontHeight && !object_expands
+                ? font_height : height;
         Scalar x{};
         if (request.width.is_some()) {
             auto extra = *request.width - width;
@@ -373,7 +386,7 @@ auto build_prepared(Collection &collection,TextRequest request,const PreparedTex
                                                        : byte_start,
                       .glyph_start = static_cast<Index>(result.data.glyphs.len().to_primitive()),
                       .logical = {x, y, width, height},
-                      .baseline = y + ascent,
+                      .baseline = y + ascent + top_leading,
                       .ascent = ascent,
                       .descent = descent};
         auto stop_start = static_cast<Index>(query->stops.len().to_primitive());

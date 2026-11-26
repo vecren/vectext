@@ -98,6 +98,29 @@ class TextFormatBuilder {
         line_advance(value);
         return rstd::move(*this);
     }
+    auto line_height(Option<Scalar> value) & -> TextFormatBuilder & {
+        value_.line_height = rstd::move(value);
+        return *this;
+    }
+    auto line_height(Option<Scalar> value) && -> TextFormatBuilder {
+        line_height(rstd::move(value));
+        return rstd::move(*this);
+    }
+    auto line_height(Scalar value) & -> TextFormatBuilder & {
+        return line_height(Some(Scalar(value)));
+    }
+    auto line_height(Scalar value) && -> TextFormatBuilder {
+        line_height(value);
+        return rstd::move(*this);
+    }
+    auto line_height_alignment(TextLineHeightAlignment value) & -> TextFormatBuilder & {
+        value_.line_height_alignment = value;
+        return *this;
+    }
+    auto line_height_alignment(TextLineHeightAlignment value) && -> TextFormatBuilder {
+        line_height_alignment(value);
+        return rstd::move(*this);
+    }
     auto character_spacing(Scalar value) & -> TextFormatBuilder & {
         value_.character_spacing = rstd::move(value);
         return *this;

@@ -236,6 +236,7 @@ class TextLineBreaks {
 };
 enum class TextLineMetrics { AllFonts, PrimaryFont };
 enum class TextLineAdvance { LineBox, FontHeight };
+enum class TextLineHeightAlignment { Top, Center, Bottom };
 struct TextRequest {
     ref<str> text{""_str}, family{"sans"_str}, language{"und"_str};
     Scalar size{16};
@@ -265,6 +266,9 @@ struct TextRequest {
     TextLineAdvance line_advance{TextLineAdvance::LineBox};
     // Design coordinates apply to the explicitly selected font source.
     slice<FontVariation> variations;
+    // A per-line minimum in logical pixels. Explicit heights use the resolved line box as the advance.
+    Option<Scalar> line_height;
+    TextLineHeightAlignment line_height_alignment{TextLineHeightAlignment::Center};
 };
 struct TextFormat {
     ref<str> family{"sans"_str}, language{"und"_str};
@@ -284,6 +288,8 @@ struct TextFormat {
     TextWhitespace whitespace{TextWhitespace::Preserve};
     TextLineMetrics line_metrics{TextLineMetrics::AllFonts};
     TextLineAdvance line_advance{TextLineAdvance::LineBox};
+    Option<Scalar> line_height;
+    TextLineHeightAlignment line_height_alignment{TextLineHeightAlignment::Center};
     auto valid() const -> bool {
         return finite(size) && size >= 0 && finite(line_spacing) && line_spacing >= 0 &&
                finite(character_spacing) && spacing.valid() &&
@@ -292,6 +298,9 @@ struct TextFormat {
                 line_metrics <= TextLineMetrics::PrimaryFont) &&
                (line_advance >= TextLineAdvance::LineBox &&
                 line_advance <= TextLineAdvance::FontHeight) &&
+               (line_height.is_none() || (finite(*line_height) && *line_height >= 0)) &&
+               (line_height_alignment >= TextLineHeightAlignment::Top &&
+                line_height_alignment <= TextLineHeightAlignment::Bottom) &&
                (overflow >= TextOverflow::Clip && overflow <= TextOverflow::Ellipsis) &&
                (auto_size.is_none() || auto_size->valid()) &&
                (alignment >= TextAlignment::Natural && alignment <= TextAlignment::Center) &&
@@ -430,6 +439,8 @@ struct TextLayoutData {
     Option<Scalar> font_size;
     TextLineBreaks line_breaks;
     bool emergency_wrap{};
+    Option<Scalar> line_height;
+    TextLineHeightAlignment line_height_alignment{TextLineHeightAlignment::Center};
 };
 class TextLayout {
     struct Data {
@@ -463,6 +474,9 @@ class TextLayout {
             (data.resolved_spacing.is_some() && !finite(*data.resolved_spacing)) ||
             (data.spacing != TextSpacing{} && data.resolved_spacing.is_none()) ||
             (data.font_size.is_some() && (!finite(*data.font_size) || *data.font_size<0)) ||
+            (data.line_height.is_some() && (!finite(*data.line_height) || *data.line_height < 0)) ||
+            data.line_height_alignment < TextLineHeightAlignment::Top ||
+            data.line_height_alignment > TextLineHeightAlignment::Bottom ||
             data.lines.is_empty())
             return Err(TextError::InvalidValue);
         auto text = data.text.as_str();
@@ -574,6 +588,10 @@ class TextLayout {
     auto hidden_range() const -> Option<TextRange> { return data_->value.hidden; }
     auto revision() const -> Serial { return data_->value.revision; }
     auto font_size() const -> Option<Scalar> {return data_->value.font_size;}
+    auto line_height() const -> Option<Scalar> { return data_->value.line_height; }
+    auto line_height_alignment() const -> TextLineHeightAlignment {
+        return data_->value.line_height_alignment;
+    }
     auto lines() const -> slice<TextLine> { return data_->value.lines.as_slice(); }
     auto boundaries() const -> const TextBoundaries & { return data_->value.boundaries; }
     auto inline_objects() const -> const TextInlineObjects & { return data_->value.inline_objects; }

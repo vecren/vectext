@@ -137,4 +137,145 @@ TEST(CharacterSpacing, InvalidValuesAndNonmonotoneAdvancesAreRejected) {
     EXPECT_EQ(empty.logical_bounds().width, Scalar(0));
     EXPECT_TRUE(empty.caret(0).is_ok());
 }
+
+TEST(LineHeight, AlignmentDistributesLeadingAroundTheNaturalLine) {
+    auto service = fixed_service();
+    TextRequest request{.text = "A"_str};
+    auto natural = service.layout(request).unwrap();
+    const auto &natural_line = natural.lines()[usize()];
+    constexpr Scalar leading = 10;
+    request.line_height = Some(natural_line.logical.height + leading);
+    const TextLineHeightAlignment alignments[]{TextLineHeightAlignment::Top,
+        TextLineHeightAlignment::Center, TextLineHeightAlignment::Bottom};
+    const Scalar offsets[]{0, leading / 2, leading};
+    for (Index i{}; i < 3; ++i) {
+        request.line_height_alignment = alignments[i];
+        auto layout = service.layout(request).unwrap();
+        const auto &line = layout.lines()[usize()];
+        EXPECT_EQ(layout.line_height(), request.line_height);
+        EXPECT_EQ(layout.line_height_alignment(), alignments[i]);
+        EXPECT_EQ(line.logical.height, *request.line_height);
+        EXPECT_EQ(layout.logical_bounds(), line.logical);
+        EXPECT_EQ(line.baseline, natural_line.baseline + offsets[i]);
+        EXPECT_EQ(line.ascent, natural_line.ascent);
+        EXPECT_EQ(line.descent, natural_line.descent);
+        EXPECT_EQ(layout.glyphs()[usize()].position.y, line.baseline);
+        EXPECT_TRUE(near(layout.typographic_bounds().y, natural.typographic_bounds().y + offsets[i]));
+        EXPECT_TRUE(near(layout.ink_bounds().y, natural.ink_bounds().y + offsets[i]));
+        EXPECT_EQ(layout.caret(0).unwrap().bounds.height, line.logical.height);
+        auto boxes = layout.range_boxes({0, 1}).unwrap();
+        ASSERT_EQ(boxes.len(), usize(1));
+        EXPECT_EQ(boxes[usize()].baseline, line.baseline);
+        EXPECT_EQ(boxes[usize()].bounds, line.logical);
+        EXPECT_TRUE(layout.hit({0, line.logical.height - 1}).unwrap().inside);
+    }
+}
+
+TEST(LineHeight, HardAndSoftBreaksKeepEveryLineBox) {
+    auto service = fixed_service();
+    auto natural = service.layout({.text = "A"_str}).unwrap();
+    const auto height = natural.logical_bounds().height + 10;
+    constexpr Scalar gap = 3;
+    TextRequest request{.text = "AAA\n\nA"_str, .width = Some(natural.logical_bounds().width * 1.5),
+        .line_spacing = gap, .line_height = Some(Scalar(height))};
+    auto layout = service.layout(request).unwrap();
+    ASSERT_EQ(layout.lines().len(), usize(5));
+    EXPECT_EQ(layout.lines()[usize(3)].logical.width, Scalar(0));
+    for (Index i{}; i < 5; ++i) {
+        const auto &line = layout.lines()[usize(i)];
+        EXPECT_EQ(line.logical.y, i * (height + gap));
+        EXPECT_EQ(line.logical.height, height);
+        EXPECT_EQ(line.baseline, line.logical.y + natural.baseline() + 5);
+        const auto caret = layout.caret(line.byte_start).unwrap();
+        EXPECT_EQ(caret.bounds.y, line.logical.y);
+        EXPECT_EQ(caret.bounds.height, height);
+    }
+    EXPECT_EQ(layout.logical_bounds().height, 5 * height + 4 * gap);
+
+    request.text = ""_str;
+    auto empty = service.layout(request).unwrap();
+    ASSERT_EQ(empty.lines().len(), usize(1));
+    EXPECT_EQ(empty.logical_bounds().height, height);
+    EXPECT_EQ(empty.caret(0).unwrap().bounds.height, height);
+}
+
+TEST(LineHeight, TallInlineObjectExpandsItsLineAndKeepsItsBaseline) {
+    auto service = fixed_service();
+    auto font = service.layout({.text = "A"_str}).unwrap();
+    const auto native_height = font.logical_bounds().height;
+    const auto object_ascent = native_height + 20;
+    const TextInlineObject object{{1, 4}, 10, object_ascent, 2, {0, -object_ascent, 10, object_ascent + 2}};
+    TextRequest request{.text = "A\uFFFCA\nA"_str};
+    request.inline_objects = TextInlineObjects::create(request.text,
+        slice<TextInlineObject>::from_raw_parts(&object, usize(1))).unwrap();
+    auto natural = service.layout(request).unwrap();
+    request.line_height = Some(native_height + 10);
+    auto layout = service.layout(request).unwrap();
+    ASSERT_EQ(layout.lines().len(), usize(2));
+    ASSERT_EQ(layout.inline_boxes().len(), usize(1));
+    const auto &first = layout.lines()[usize()];
+    EXPECT_EQ(first.logical, natural.lines()[usize()].logical);
+    EXPECT_EQ(first.baseline, natural.baseline());
+    EXPECT_EQ(layout.inline_boxes()[usize()].ink, natural.inline_boxes()[usize()].ink);
+    EXPECT_EQ(layout.lines()[usize(1)].logical.height, *request.line_height);
+    EXPECT_EQ(layout.lines()[usize(1)].baseline, first.logical.height + font.baseline() + 5);
+
+    request.line_height = Some(first.logical.height + 10);
+    auto expanded = service.layout(request).unwrap();
+    EXPECT_EQ(expanded.inline_boxes()[usize()].logical.height, *request.line_height);
+    EXPECT_EQ(expanded.inline_boxes()[usize()].ink.y, layout.inline_boxes()[usize()].ink.y + 5);
+}
+
+TEST(LineHeight, ExplicitLineBoxControlsAdvanceAndAutoSize) {
+    auto collection = FontCollection::create({.system_fonts = false}).unwrap();
+    auto bytes = font_data("DejaVuSans.ttf"_str);
+    auto source = collection.register_font(bytes.as_slice(), 0, Some(FontMetrics{.75, .25, .75})).unwrap();
+    auto service = SystemTextService(collection);
+    TextRequest request{.text = "A\nA"_str, .size = 16, .source = Some(source),
+        .line_advance = TextLineAdvance::FontHeight};
+    auto native = service.layout(request).unwrap();
+    EXPECT_TRUE(native.line_height().is_none());
+    EXPECT_EQ(native.lines()[usize()].logical.height, 16.);
+    EXPECT_EQ(native.lines()[usize(1)].logical.y, 12.);
+    request.line_height = Some(Scalar(12));
+    auto minimum = service.layout(request).unwrap();
+    EXPECT_EQ(minimum.lines()[usize()].logical.height, 16.);
+    EXPECT_EQ(minimum.lines()[usize(1)].logical.y, 16.);
+    EXPECT_EQ(minimum.baseline(), native.baseline());
+
+    request.height = Some(Scalar(42));
+    request.auto_size = Some(TextAutoSize{12, 24, 1});
+    request.line_height = Some(Scalar(21));
+    auto fitted = service.layout(request).unwrap();
+    EXPECT_EQ(fitted.font_size(), Some(Scalar(21)));
+    EXPECT_EQ(fitted.logical_bounds().height, 42.);
+    request.height = Some(Scalar(41));
+    auto too_short = service.layout(request).unwrap();
+    EXPECT_EQ(too_short.font_size(), Some(Scalar(12)));
+    EXPECT_EQ(too_short.logical_bounds().height, 42.);
+}
+
+TEST(LineHeight, BuilderAndValidation) {
+    auto service = fixed_service();
+    TextFormatBuilder builder;
+    auto centered = builder.line_height(20).build();
+    EXPECT_EQ(centered.line_height, Some(Scalar(20)));
+    EXPECT_EQ(centered.line_height_alignment, TextLineHeightAlignment::Center);
+    auto bottom = TextFormatBuilder{}
+        .line_height(Some(Scalar(24)))
+        .line_height_alignment(TextLineHeightAlignment::Bottom)
+        .build();
+    EXPECT_EQ(bottom.line_height, Some(Scalar(24)));
+    EXPECT_EQ(bottom.line_height_alignment, TextLineHeightAlignment::Bottom);
+    EXPECT_TRUE(builder.line_height(None<Scalar>()).build().line_height.is_none());
+
+    const Scalar invalid[]{-1, __builtin_inf(), __builtin_nan("")};
+    for (auto height : invalid) {
+        EXPECT_FALSE(TextFormatBuilder{}.line_height(height).build().valid());
+        EXPECT_EQ(service.layout({.line_height = Some(Scalar(height))}).unwrap_err(), TextError::InvalidValue);
+    }
+    EXPECT_EQ(service.layout({.line_height = Some(Scalar(1048577))}).unwrap_err(), TextError::Limit);
+    EXPECT_EQ(service.layout({.line_height_alignment = TextLineHeightAlignment(99)}).unwrap_err(),
+        TextError::InvalidValue);
+}
 }
