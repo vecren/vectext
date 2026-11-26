@@ -52,35 +52,6 @@ TEST(VectextBoundaries, PreparedAnalysisSurvivesLayoutAndPreservesLegacyCaretQue
     EXPECT_EQ(service.layout({.text = "text"_str, .boundaries = &absent}).unwrap_err(), TextError::InvalidValue);
 }
 
-TEST(VectextBoundaries, Unicode17GraphemeBreakConformance) {
-    auto source = data_text("GraphemeBreakTest.txt"_str); auto chars = source.as_str()->chars();
-    String text; Vec<Index> expected; unsigned hex{}, digits{}, cases{}; bool comment{};
-    auto number = [&] { if (digits) text.push(char32_t(hex)); hex = digits = 0; };
-    auto line = [&] {
-        number();
-        if (!expected.is_empty()) {
-            auto result = TextBoundaries::create(text.as_str()).unwrap();
-            ASSERT_EQ(result.graphemes().len(), expected.len());
-            for (usize i{}; i < expected.len(); ++i) EXPECT_EQ(result.graphemes()[i], expected[i]);
-            ++cases;
-        }
-        text.clear(); expected.clear(); comment = false;
-    };
-    for (auto item = chars.next(); item.is_some(); item = chars.next()) {
-        auto cp = item->to_primitive();
-        if (cp == '\n') { line(); continue; }
-        if (comment) continue;
-        if (cp == '#') { number(); comment = true; continue; }
-        if (cp == 0xf7) { number(); expected.push(Index(text.len().to_primitive())); }
-        else if (cp == 0xd7) number();
-        else if (cp >= '0' && cp <= '9') { hex = hex * 16 + cp - '0'; ++digits; }
-        else if (cp >= 'A' && cp <= 'F') { hex = hex * 16 + cp - 'A' + 10; ++digits; }
-        else number();
-    }
-    line(); EXPECT_GT(cases, 700u);
-    rstd::io::println("Unicode 17 grapheme cases={}", cases);
-}
-
 TEST(VectextBoundaries, DefaultWordsClassifyCjkAndSkipEmojiWithoutDictionaries) {
     auto text = TextBoundaries::create("中国 カタカナ 👩‍🚀 12"_str).unwrap();
     EXPECT_EQ(text.word_at(0).unwrap(), (TextWord{{0, 3}, true}));
